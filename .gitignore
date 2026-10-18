@@ -6,6 +6,10 @@ dist/
 build/
 .vite/
 
+# ─── Private Vault Storage ───────────────────────────────────
+vault-storage/
+storage/
+
 # ─── Environment / Secrets ───────────────────────────────────
 .env
 .env.local

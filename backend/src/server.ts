@@ -14,6 +14,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import healthRouter from './routes/health';
 import authRouter from './routes/auth';
+import documentsRouter from './routes/documents';
 import { connectDB, disconnectDB } from './lib/db';
 
 // ── App setup ────────────────────────────────────────────────
@@ -30,7 +31,7 @@ app.use(cookieParser());
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,   // allow cookies in cross-origin requests
   })
 );
@@ -38,6 +39,8 @@ app.use(
 // ── Routes ───────────────────────────────────────────────────
 app.use('/health', healthRouter);
 app.use('/auth',   authRouter);
+app.use('/api/v1/documents', documentsRouter);
+app.use('/documents',        documentsRouter); // Convenient alias
 
 // 404 handler — catches any route that didn't match above
 app.use((_req: Request, res: Response) => {
