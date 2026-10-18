@@ -18,7 +18,7 @@ Built for the **Snovasys Fresher Hiring Challenge 2026**.
 | **Backend** | Node.js + Express + TypeScript | Modular architecture, Zod schema validation, Argon2id hashing |
 | **Database** | MongoDB Atlas + Mongoose | Schema constraints, indexes, excluded hash by default (`select: false`) |
 | **Auth** | JWT in `HttpOnly` Cookies | `SameSite=Strict`, CSRF defense, anti-enumeration constant-time verification |
-| **Testing** | Vitest + Supertest | 25 automated tests with `mongodb-memory-server` isolated test DB |
+| **Testing** | Vitest + Supertest | 71 automated tests across 4 suites with `mongodb-memory-server` isolated test DB |
 | **DevOps** | Docker, GitHub Actions, Render/Vercel | Automated CI workflow, multi-stage Docker containerization |
 
 ---
@@ -103,49 +103,40 @@ npm run dev      # Starts Vite dev server on http://localhost:5173
 ### 4. Running Automated Tests
 ```bash
 cd backend
-npm test         # Runs full Vitest suite (47 passing tests in-memory)
+npm test         # Runs full Vitest suite (71 passing tests sequentially in-memory)
 ```
 
 ---
 
-## Phase 3: Secure Document Management Architecture
+## Phase 3 & 4: Secure Document Management, Sharing & Permissions
 
-### Main Request Flow
-```
-Client (Browser)
-   │  multipart/form-data (Title, Category, File)
-   ▼
-[requireAuth Middleware] ── Cookie Verified (JWT) ──> Attaches req.user
-   │
-   ▼
-[Multer In-Memory Buffer] (Max 10MB)
-   │
-   ▼
-[fileValidation.ts]
-   ├── Magic Byte Signature Check (PDF %PDF-, PNG \x89PNG, JPEG \xFF\xD8\xFF, DOCX/XLSX PK..)
-   ├── File Extension & MIME Allowlist Verification
-   └── Filename Sanitization (strips traversal sequences, prevents shell injection)
-   │
-   ▼
-[LocalStorageService] ── Generates Random Server Key (UUIDv4) ──> Writes to isolated private storage
-   │
-   ▼
-[Mongoose Document Model] ── Persists metadata (ownerId from session, title, category, size)
-   │ (Rollback guard: if DB fails, physical storage file is automatically unlinked)
-   ▼
-Response 201 Created (Safe metadata without internal storage key)
-```
+### Authorization & Access Control Matrix
 
-### Document Management Endpoints
+| Role / Permission | View Metadata | Download File | Modify Metadata (`PATCH`) | Delete Document | Grant / Revoke Permissions |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Document Owner** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **System Admin** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Recipient (EDIT)** | ✅ | ✅ | ✅ | ❌ (403) | ❌ (403) |
+| **Recipient (READ)** | ✅ | ✅ | ❌ (403) | ❌ (403) | ❌ (403) |
+| **Revoked / Unshared** | ❌ (403) | ❌ (403) | ❌ (403) | ❌ (403) | ❌ (403) |
+| **Unauthenticated** | ❌ (401) | ❌ (401) | ❌ (401) | ❌ (401) | ❌ (401) |
+
+---
+
+### API Endpoints
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | `POST` | `/api/v1/documents` | Required | Uploads file with magic-byte verification and private storage isolation. |
-| `GET` | `/api/v1/documents` | Required | Lists documents accessible to the user with category/search filters. |
-| `GET` | `/api/v1/documents/:id` | Required | Retrieves document metadata (enforces ownership via `DocumentAccessService`). |
-| `PATCH` | `/api/v1/documents/:id` | Required | Updates metadata (`title`, `category`). Strictly rejects attempts to modify `ownerId` or `storageKey`. |
-| `DELETE` | `/api/v1/documents/:id` | Required | Deletes metadata record and unlinks file from physical storage. |
+| `GET` | `/api/v1/documents` | Required | Lists documents owned by or actively shared with user (includes `accessLevel`). |
+| `GET` | `/api/v1/documents/recipients/list` | Required | Returns registered users (excluding current user) for sharing dropdown. |
+| `GET` | `/api/v1/documents/:id` | Required | Retrieves document metadata with user's access level (`DocumentAccessService`). |
+| `PATCH` | `/api/v1/documents/:id` | Required | Updates metadata (`title`, `category`). Permitted for Owner, Admin, or `EDIT` recipient. |
+| `DELETE` | `/api/v1/documents/:id` | Required | Deletes physical file and database document; cleans up associated permissions. |
 | `GET` | `/api/v1/documents/:id/download` | Required | Streams file directly with `nosniff`, `no-cache`, and safe `Content-Disposition`. |
+| `PUT` | `/api/v1/documents/:id/permissions/:userId` | Owner/Admin | Grants or updates `READ`/`EDIT` permission for recipient user (atomic upsert). |
+| `GET` | `/api/v1/documents/:id/permissions` | Owner/Admin | Lists all active and historical permission records for the document. |
+| `DELETE` | `/api/v1/documents/:id/permissions/:userId` | Owner/Admin | Revokes recipient permission with immediate termination of access. |
 
 ---
 
@@ -154,37 +145,44 @@ Response 201 Created (Safe metadata without internal storage key)
 The automated Vitest test suite runs in-memory with zero network or production dependencies:
 
 ```text
-✓ tests/health.test.ts     (6 tests)
-✓ tests/auth.test.ts       (19 tests)
-✓ tests/documents.test.ts  (22 tests)
+✓ tests/health.test.ts       (6 tests)
+✓ tests/auth.test.ts         (19 tests)
+✓ tests/documents.test.ts    (22 tests)
+✓ tests/permissions.test.ts  (24 tests)
 
-Test Files:  3 passed (3)
-Tests:       47 passed (47)
-Duration:    ~5 seconds
+Test Files:  4 passed (4)
+Tests:       71 passed (71)
+Duration:    ~45 seconds
 ```
 
-### Document Test Matrix (`tests/documents.test.ts`):
-1. **Unauthenticated access**: Rejection of upload, listing, and download (401).
-2. **Owner lifecycle**: Uploading, listing, retrieving, and metadata isolation.
-3. **Cross-user IDOR defense**: User B forbidden from reading, modifying, downloading, or deleting User A's documents (403).
-4. **Forged owner ID prevention**: Client-submitted `ownerId` in request bodies is strictly ignored.
-5. **Magic byte inspection**: Extension mismatches and disguised executables rejected (400).
-6. **Conservative upload limits**: Files >10MB rejected with clear feedback (400).
-7. **Path traversal defense**: Path separators and `..` sequences stripped cleanly.
-8. **Forbidden fields protection**: Disallows modifying `ownerId` or `storageKey` via PATCH (400).
-9. **Atomic cleanup**: Automatic rollback and unlinking of storage files if DB persistence fails.
-10. **Hardened streaming**: Validates `nosniff`, `no-cache`, `Content-Disposition`, and binary byte integrity.
-11. **Missing document handling**: Clean 404 responses for non-existent or malformed IDs.
+### Security Test Matrix Highlights:
+1. **Unauthenticated access**: Upload, list, download, grant, and revoke rejected (401).
+2. **Owner lifecycle**: Full control over documents, private storage cleanup, and sharing management.
+3. **Cross-user IDOR defense**: Third-party users denied metadata, download, modify, and delete access (403).
+4. **Granular Permissions (READ vs EDIT)**:
+   - Recipient with `READ` can view metadata and download, but cannot edit (403) or delete (403).
+   - Recipient with `EDIT` can modify title and category, but cannot delete (403) or share with others (403).
+5. **Immediate Revocation**:
+   - Owner revokes recipient access; subsequent metadata, download, and edit requests immediately return 403.
+   - Owner cannot revoke their own access (400).
+   - Owner's own access is completely preserved after revoking recipient.
+6. **Race-Condition & Duplicate Safety**:
+   - MongoDB compound unique index `{ documentId: 1, userId: 1 }` prevents duplicate records.
+   - Atomic `findOneAndUpdate` with `upsert` handles concurrent grants and restores revoked permissions cleanly.
+7. **Zero-Trust Field Derivation**:
+   - `grantedBy` and `ownerId` are strictly derived from verified session tokens, ignoring client request payloads.
+8. **Storage & Permission Cascades**:
+   - Deleting a document removes the physical storage file and cascades removal of all associated permissions.
 
 ---
 
-## Roadmap & Unfinished Work
+## Roadmap & Progress
 
-- [x] **Phase 1 — Project Foundation & Tooling** (Vite + React, Express + TS, Healthcheck)
-- [x] **Phase 2 — Database & Authentication** (MongoDB Atlas, Argon2id, HttpOnly JWT, RBAC)
-- [x] **Phase 3 — Private Document Management** (Private storage, magic bytes, streaming, RBAC access service, 47 tests)
-- [ ] **Phase 4 — Granular Sharing & Access Delegation** (Time-bound secure links, recipient revocation, view limits) — *Next Phase*
-- [ ] **Phase 5 — Security Hardening & Immutable Audit Log** (Tamper detection, audit trail of all access events) — *Future Phase*
+- [x] **Phase 1 — Project Foundation & Tooling** (Vite + React, Express + TS, Healthcheck, CI)
+- [x] **Phase 2 — Database & Authentication** (MongoDB Atlas, Argon2id, HttpOnly JWT, RBAC, 25 tests)
+- [x] **Phase 3 — Private Document Management** (Private storage, magic bytes, streaming, rollback cleanup, 47 tests)
+- [x] **Phase 4 — Document Sharing & Permissions** (Permission model, READ/EDIT grants, immediate revocation, sharing UI, 71 tests)
+- [ ] **Phase 5 — Security Hardening & Immutable Audit Log** (Tamper detection, audit dashboard of access and sharing events) — *Future Phase*
 
 ---
 

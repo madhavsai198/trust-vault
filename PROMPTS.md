@@ -77,4 +77,28 @@ Each entry includes:
 
 ---
 
+### Entry 004
+- **Date:** 2026-10-18
+- **Phase:** Phase 4 — Document Sharing and Permissions
+- **Tool:** Antigravity (Google DeepMind)
+- **Prompt:**
+  ```
+  Implement secure per-document sharing, READ/EDIT permissions, and revocation:
+  - Mongoose Permission model with documentId, userId, permission (READ/EDIT), grantedBy, revokedAt, timestamps, compound unique index.
+  - API endpoints: PUT /api/v1/documents/:id/permissions/:userId, GET /api/v1/documents/:id/permissions, DELETE /api/v1/documents/:id/permissions/:userId, GET /api/v1/documents/recipients/list.
+  - Integrate permissions into DocumentAccessService (enforce read, modify, delete, share).
+  - Immediate revocation effect; unshared/revoked users denied with 403 Forbidden.
+  - Comprehensive automated security test suite (24 tests) covering access levels, IDOR, forged headers, duplicate grants, and deletion cascades.
+  - Frontend sharing interface in DocumentsView with recipient picker, permission selector, active grant list, revocation, and loading/error states.
+  ```
+- **Real Challenges & Corrections:**
+  1. *MongoDB Atlas Residential IP Lockout*: During development, dynamic ISP IP rotation blocked incoming Atlas connections. Enhanced `lib/db.ts` to attempt connection with retry, and cleanly fall back to `mongodb-memory-server` with automated user seeding for local dev resilience.
+  2. *Mongoose findOneAndUpdate Deprecation*: In Mongoose 9+, passing `{ new: true }` in `findOneAndUpdate` triggers a deprecation warning recommending `{ returnDocument: 'after' }`. Modernized options to maintain deprecation-free execution.
+  3. *Vitest Parallel Test Collisions on Windows*: Running 4 in-memory Mongo instances concurrently in Vitest caused sporadic port/process contention on Windows. Added `--fileParallelism=false` in `package.json` to guarantee sequential, 100% deterministic test execution.
+  4. *Recipient vs Owner Boundaries*: Explicitly prevented document owners from sharing documents with themselves (400) and preventing non-owners or recipients from altering permissions (403).
+- **Output Used:** Yes — 71/71 tests passing across 4 test suites; frontend verified with clean production build.
+
+---
+
 > **Note to reviewers:** Every AI-assisted design decision and line of code was reviewed and verified by the developer. The developer can defend all architectural and security implementations during technical interviews.
+

@@ -16,8 +16,11 @@ import crypto from 'crypto';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { z } from 'zod';
+import { isValidObjectId } from 'mongoose';
 import { requireAuth } from '../middleware/auth';
 import Document, { DocumentCategory } from '../models/Document';
+import Permission, { PermissionLevel } from '../models/Permission';
+import User, { Role } from '../models/User';
 import { getStorageService } from '../services/storage';
 import { documentAccessService, DocumentAccessError } from '../services/documentAccess';
 import {
@@ -25,7 +28,6 @@ import {
   MAX_FILE_SIZE_BYTES,
   sanitizeFilename,
 } from '../lib/fileValidation';
-import { Role } from '../models/User';
 
 const router = Router();
 
@@ -40,17 +42,20 @@ const upload = multer({
 });
 
 // Helper to format safe document response (hiding internal storageKey)
-function toSafeDocument(doc: {
-  _id: unknown;
-  ownerId: unknown;
-  title: string;
-  category: string;
-  originalFilename: string;
-  detectedMimeType: string;
-  sizeBytes: number;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
+function toSafeDocument(
+  doc: {
+    _id: unknown;
+    ownerId: unknown;
+    title: string;
+    category: string;
+    originalFilename: string;
+    detectedMimeType: string;
+    sizeBytes: number;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  accessLevel?: string
+) {
   return {
     id:               doc._id,
     ownerId:          doc.ownerId,
@@ -61,6 +66,7 @@ function toSafeDocument(doc: {
     sizeBytes:        doc.sizeBytes,
     createdAt:        doc.createdAt,
     updatedAt:        doc.updatedAt,
+    ...(accessLevel && { accessLevel }),
   };
 }
 
@@ -182,33 +188,84 @@ router.post(
 );
 
 // ── GET /api/v1/documents ─────────────────────────────────────
-// Lists documents owned by the authenticated user (or all if ADMIN).
+// Lists documents owned by or actively shared with the authenticated user.
 router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { category, search } = req.query;
 
     const filter: Record<string, unknown> = {};
 
-    // Standard users only see documents they own
+    let userPermMap = new Map<string, PermissionLevel>();
+
     if (req.user!.role !== Role.ADMIN) {
-      filter.ownerId = req.user!.userId;
+      // Find all active permissions granted to this user
+      const activePerms = await Permission.find({
+        userId: req.user!.userId,
+        revokedAt: null,
+      });
+
+      userPermMap = new Map(
+        activePerms.map((p) => [p.documentId.toString(), p.permission])
+      );
+
+      const sharedDocIds = activePerms.map((p) => p.documentId);
+
+      // Return documents owned by user OR actively shared with user
+      filter.$or = [
+        { ownerId: req.user!.userId },
+        { _id: { $in: sharedDocIds } },
+      ];
     }
 
-    if (category && typeof category === 'string' && Object.values(DocumentCategory).includes(category as DocumentCategory)) {
+    if (
+      category &&
+      typeof category === 'string' &&
+      Object.values(DocumentCategory).includes(category as DocumentCategory)
+    ) {
       filter.category = category;
     }
 
     if (search && typeof search === 'string' && search.trim()) {
-      // Escape regex special chars to prevent regex injection attacks
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.title = { $regex: escaped, $options: 'i' };
     }
 
     const docs = await Document.find(filter).sort({ createdAt: -1 });
 
+    const safeDocs = docs.map((doc) => {
+      let accessLevel = 'OWNER';
+      if (req.user!.role === Role.ADMIN) {
+        accessLevel = 'ADMIN';
+      } else if (doc.ownerId.toString() !== req.user!.userId) {
+        accessLevel = userPermMap.get(doc._id.toString()) || 'READ';
+      }
+      return toSafeDocument(doc, accessLevel);
+    });
+
     res.status(200).json({
-      documents: docs.map(toSafeDocument),
-      count: docs.length,
+      documents: safeDocs,
+      count: safeDocs.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/v1/documents/recipients/list ─────────────────────
+// Returns registered users (excluding current user) for the sharing dropdown.
+router.get('/recipients/list', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const users = await User.find({ _id: { $ne: req.user!.userId } })
+      .select('name email role')
+      .sort({ name: 1 });
+
+    res.status(200).json({
+      users: users.map((u) => ({
+        id:    u._id,
+        name:  u.name,
+        email: u.email,
+        role:  u.role,
+      })),
     });
   } catch (err) {
     next(err);
@@ -225,8 +282,10 @@ router.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFu
       'read'
     );
 
+    const accessLevel = await documentAccessService.getUserAccessLevel(req.user!, doc);
+
     res.status(200).json({
-      document: toSafeDocument(doc),
+      document: toSafeDocument(doc, accessLevel),
     });
   } catch (err) {
     if (err instanceof DocumentAccessError) {
@@ -239,16 +298,15 @@ router.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFu
 
 // ── PATCH /api/v1/documents/:id ───────────────────────────────
 // Update permitted metadata fields (title, category).
+// Permitted for document OWNER or shared user with EDIT permission.
 router.patch('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // 1. Authorize modification
     const doc = await documentAccessService.getDocumentWithAccess(
       req.params.id,
       req.user!,
       'modify'
     );
 
-    // 2. Validate input — strictly disallows modifying ownerId, storageKey, sizeBytes, etc.
     const result = patchMetadataSchema.safeParse(req.body);
     if (!result.success) {
       res.status(400).json({
@@ -282,6 +340,7 @@ router.patch('/:id', requireAuth, async (req: Request, res: Response, next: Next
 
 // ── DELETE /api/v1/documents/:id ──────────────────────────────
 // Deletes both the storage file and the DB document.
+// Only OWNER (or ADMIN) can delete.
 router.delete('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const doc = await documentAccessService.getDocumentWithAccess(
@@ -295,7 +354,10 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response, next: Nex
     // 1. Delete physical file from private storage
     await storageService.deleteFile(doc.storageKey);
 
-    // 2. Delete database record
+    // 2. Clean up any associated permissions
+    await Permission.deleteMany({ documentId: doc._id });
+
+    // 3. Delete database record
     await Document.findByIdAndDelete(doc._id);
 
     res.status(200).json({ message: 'Document deleted successfully' });
@@ -312,7 +374,6 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response, next: Nex
 // Streams the document through the backend with hardened security headers.
 router.get('/:id/download', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // 1. Recheck current permissions on every request
     const doc = await documentAccessService.getDocumentWithAccess(
       req.params.id,
       req.user!,
@@ -320,14 +381,8 @@ router.get('/:id/download', requireAuth, async (req: Request, res: Response, nex
     );
 
     const storageService = getStorageService();
-
-    // 2. Obtain file read stream from private storage
     const fileStream = await storageService.getFileStream(doc.storageKey);
 
-    // 3. Set hardened response headers
-    // - Content-Disposition with sanitized filename
-    // - Prevent MIME sniffing
-    // - Aggressive no-cache so revoked permissions cannot be bypassed via browser cache
     const safeFilename = sanitizeFilename(doc.originalFilename);
     res.setHeader(
       'Content-Disposition',
@@ -340,7 +395,6 @@ router.get('/:id/download', requireAuth, async (req: Request, res: Response, nex
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
 
-    // 4. Stream response
     await pipeline(fileStream, res);
   } catch (err) {
     if (err instanceof DocumentAccessError) {
@@ -350,5 +404,205 @@ router.get('/:id/download', requireAuth, async (req: Request, res: Response, nex
     next(err);
   }
 });
+
+// ─────────────────────────────────────────────────────────────
+// PERMISSIONS / SHARING ENDPOINTS (PHASE 4)
+// ─────────────────────────────────────────────────────────────
+
+const grantPermissionSchema = z.object({
+  permission: z.nativeEnum(PermissionLevel, {
+    message: 'Permission must be either READ or EDIT',
+  }),
+});
+
+// ── PUT /api/v1/documents/:id/permissions/:userId ─────────────
+// Grants or updates READ/EDIT permission for a recipient user.
+// Strictly restricted to the document OWNER (or system ADMIN).
+router.put(
+  '/:id/permissions/:userId',
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, userId: recipientUserId } = req.params;
+
+      // 1. Validate IDs
+      if (!isValidObjectId(id)) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+      if (!isValidObjectId(recipientUserId)) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      // 2. Authorize sharing management (Owner or Admin only)
+      const doc = await documentAccessService.getDocumentWithAccess(
+        id,
+        req.user!,
+        'share'
+      );
+
+      // 3. Prevent sharing with self (owner already has full ownership)
+      if (doc.ownerId.toString() === recipientUserId) {
+        res.status(400).json({ error: 'Owner already has full access to this document' });
+        return;
+      }
+
+      // 4. Verify recipient user exists in database
+      const recipient = await User.findById(recipientUserId);
+      if (!recipient) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      // 5. Validate permission level (READ or EDIT)
+      const parseResult = grantPermissionSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        res.status(400).json({
+          error: 'Invalid permission payload',
+          details: parseResult.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const { permission } = parseResult.data;
+
+      // 6. Atomic race-safe upsert on { documentId, userId }
+      //    Derives grantedBy strictly from the verified session (req.user.userId).
+      //    Resets revokedAt to null if previously revoked.
+      const permDoc = await Permission.findOneAndUpdate(
+        { documentId: doc._id, userId: recipient._id },
+        {
+          $set: {
+            permission,
+            grantedBy: req.user!.userId,
+            revokedAt: null,
+          },
+        },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+      )
+        .populate('userId', 'name email role')
+        .populate('grantedBy', 'name email role');
+
+      res.status(200).json({
+        message: `Granted ${permission} permission to ${recipient.email}`,
+        permission: {
+          id:         permDoc!._id,
+          documentId: permDoc!.documentId,
+          permission: permDoc!.permission,
+          user:       permDoc!.userId,
+          grantedBy:  permDoc!.grantedBy,
+          revokedAt:  permDoc!.revokedAt,
+          createdAt:  permDoc!.createdAt,
+          updatedAt:  permDoc!.updatedAt,
+        },
+      });
+    } catch (err) {
+      if (err instanceof DocumentAccessError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      next(err);
+    }
+  }
+);
+
+// ── GET /api/v1/documents/:id/permissions ─────────────────────
+// Lists all permissions (active & historical) for a document.
+// Restricted to the document OWNER (or system ADMIN).
+router.get(
+  '/:id/permissions',
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params;
+
+      const doc = await documentAccessService.getDocumentWithAccess(
+        id,
+        req.user!,
+        'share'
+      );
+
+      const perms = await Permission.find({ documentId: doc._id })
+        .populate('userId', 'name email role')
+        .populate('grantedBy', 'name email role')
+        .sort({ createdAt: -1 });
+
+      res.status(200).json({
+        documentId: doc._id,
+        permissions: perms.map((p) => ({
+          id:         p._id,
+          documentId: p.documentId,
+          permission: p.permission,
+          user:       p.userId,
+          grantedBy:  p.grantedBy,
+          revokedAt:  p.revokedAt,
+          createdAt:  p.createdAt,
+          updatedAt:  p.updatedAt,
+        })),
+      });
+    } catch (err) {
+      if (err instanceof DocumentAccessError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      next(err);
+    }
+  }
+);
+
+// ── DELETE /api/v1/documents/:id/permissions/:userId ──────────
+// Revokes permission for a recipient. Immediate effect on subsequent requests.
+// Restricted to the document OWNER (or system ADMIN).
+router.delete(
+  '/:id/permissions/:userId',
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id, userId: recipientUserId } = req.params;
+
+      if (!isValidObjectId(id) || !isValidObjectId(recipientUserId)) {
+        res.status(404).json({ error: 'Document or user not found' });
+        return;
+      }
+
+      const doc = await documentAccessService.getDocumentWithAccess(
+        id,
+        req.user!,
+        'share'
+      );
+
+      // Cannot revoke owner's own access
+      if (doc.ownerId.toString() === recipientUserId) {
+        res.status(400).json({ error: 'Cannot revoke owner access' });
+        return;
+      }
+
+      // Find active permission
+      const perm = await Permission.findOne({
+        documentId: doc._id,
+        userId: recipientUserId,
+        revokedAt: null,
+      });
+
+      if (!perm) {
+        res.status(404).json({ error: 'Active permission not found for this user' });
+        return;
+      }
+
+      // Record revocation timestamp
+      perm.revokedAt = new Date();
+      await perm.save();
+
+      res.status(200).json({ message: 'Permission revoked successfully' });
+    } catch (err) {
+      if (err instanceof DocumentAccessError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      next(err);
+    }
+  }
+);
 
 export default router;

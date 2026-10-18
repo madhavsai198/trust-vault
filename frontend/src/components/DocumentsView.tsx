@@ -11,7 +11,13 @@
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useId } from 'react';
-import type { VaultDocument, DocumentCategory, UserProfile } from '../types/document';
+import type {
+  VaultDocument,
+  DocumentCategory,
+  UserProfile,
+  DocumentPermission,
+  RecipientUser,
+} from '../types/document';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
@@ -56,6 +62,18 @@ export default function DocumentsView({
   const [editCategory, setEditCategory] = useState<DocumentCategory>('OTHER');
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Sharing Modal states (Phase 4)
+  const [sharingDoc, setSharingDoc] = useState<VaultDocument | null>(null);
+  const [recipients, setRecipients] = useState<RecipientUser[]>([]);
+  const [selectedRecipientId, setSelectedRecipientId] = useState('');
+  const [selectedPerm, setSelectedPerm] = useState<'READ' | 'EDIT'>('READ');
+  const [docPermissions, setDocPermissions] = useState<DocumentPermission[]>([]);
+  const [loadingShareData, setLoadingShareData] = useState(false);
+  const [grantingPerm, setGrantingPerm] = useState(false);
+  const [revokingUserId, setRevokingUserId] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+
   // Action loading states
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -97,6 +115,36 @@ export default function DocumentsView({
     if (mime.includes('word') || mime.includes('document')) return '📝';
     if (mime.includes('sheet') || mime.includes('excel')) return '📊';
     return '📁';
+  };
+
+  // Helper to get access level badge
+  const getAccessLevelBadge = (level?: string) => {
+    switch (level) {
+      case 'ADMIN':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/30">
+            🛡️ Admin
+          </span>
+        );
+      case 'EDIT':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/30">
+            ✏️ Shared (EDIT)
+          </span>
+        );
+      case 'READ':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+            👁️ Shared (READ)
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+            👑 Owner
+          </span>
+        );
+    }
   };
 
   // ── Fetch Documents ──────────────────────────────────────────
@@ -286,6 +334,105 @@ export default function DocumentsView({
       setError((err as Error).message);
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  // ── Sharing Handlers (Phase 4) ──────────────────────────────
+  const fetchSharingDetails = async (docId: string) => {
+    setLoadingShareData(true);
+    setShareError(null);
+    try {
+      const [recipientsRes, permsRes] = await Promise.all([
+        fetch(`${API_URL}/api/v1/documents/recipients/list`, { credentials: 'include' }),
+        fetch(`${API_URL}/api/v1/documents/${docId}/permissions`, { credentials: 'include' }),
+      ]);
+
+      if (recipientsRes.ok) {
+        const rData = await recipientsRes.json();
+        const userList: RecipientUser[] = rData.users || [];
+        setRecipients(userList);
+        if (userList.length > 0) {
+          setSelectedRecipientId((prev) => prev || userList[0].id);
+        }
+      }
+
+      if (permsRes.ok) {
+        const pData = await permsRes.json();
+        setDocPermissions(pData.permissions || []);
+      }
+    } catch (err: unknown) {
+      setShareError((err as Error).message);
+    } finally {
+      setLoadingShareData(false);
+    }
+  };
+
+  const openShareModal = (doc: VaultDocument) => {
+    setSharingDoc(doc);
+    setShareError(null);
+    setShareSuccess(null);
+    fetchSharingDetails(doc.id);
+  };
+
+  const handleGrantPermission = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sharingDoc || !selectedRecipientId) return;
+
+    setGrantingPerm(true);
+    setShareError(null);
+    setShareSuccess(null);
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/documents/${sharingDoc.id}/permissions/${selectedRecipientId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ permission: selectedPerm }),
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to grant permission');
+      }
+
+      setShareSuccess(data.message || `Granted ${selectedPerm} access`);
+      await fetchSharingDetails(sharingDoc.id);
+    } catch (err: unknown) {
+      setShareError((err as Error).message);
+    } finally {
+      setGrantingPerm(false);
+    }
+  };
+
+  const handleRevokePermission = async (userId: string) => {
+    if (!sharingDoc) return;
+    setRevokingUserId(userId);
+    setShareError(null);
+    setShareSuccess(null);
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/documents/${sharingDoc.id}/permissions/${userId}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to revoke permission');
+      }
+
+      setShareSuccess('Permission revoked successfully');
+      await fetchSharingDetails(sharingDoc.id);
+    } catch (err: unknown) {
+      setShareError((err as Error).message);
+    } finally {
+      setRevokingUserId(null);
     }
   };
 
@@ -534,6 +681,7 @@ export default function DocumentsView({
                   <tr>
                     <th scope="col" className="px-6 py-3">Document</th>
                     <th scope="col" className="px-6 py-3">Category</th>
+                    <th scope="col" className="px-6 py-3">Access Level</th>
                     <th scope="col" className="px-6 py-3">Size</th>
                     <th scope="col" className="px-6 py-3">Uploaded</th>
                     <th scope="col" className="px-6 py-3 text-right">Actions</th>
@@ -566,6 +714,10 @@ export default function DocumentsView({
                         </span>
                       </td>
 
+                      <td className="px-6 py-4">
+                        {getAccessLevelBadge(doc.accessLevel)}
+                      </td>
+
                       <td className="px-6 py-4 text-gray-400 text-xs font-mono">
                         {formatBytes(doc.sizeBytes)}
                       </td>
@@ -589,26 +741,44 @@ export default function DocumentsView({
                             {downloadingId === doc.id ? 'Streaming…' : '⬇️ Download'}
                           </button>
 
-                          <button
-                            onClick={() => {
-                              setEditingDoc(doc);
-                              setEditTitle(doc.title);
-                              setEditCategory(doc.category);
-                            }}
-                            className="px-2.5 py-1.5 rounded-lg border border-white/10 hover:border-white/20 text-xs text-gray-400 hover:text-white transition-colors"
-                            title="Edit metadata"
-                          >
-                            ✏️
-                          </button>
+                          {(doc.accessLevel === 'OWNER' ||
+                            doc.accessLevel === 'ADMIN' ||
+                            !doc.accessLevel) && (
+                            <button
+                              onClick={() => openShareModal(doc)}
+                              className="px-2.5 py-1.5 rounded-lg border border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20 text-xs text-brand-300 font-medium transition-colors"
+                              title="Manage permissions & share"
+                            >
+                              🔗 Share
+                            </button>
+                          )}
 
-                          <button
-                            onClick={() => handleDelete(doc)}
-                            disabled={deletingId === doc.id}
-                            className="px-2.5 py-1.5 rounded-lg border border-red-500/20 hover:border-red-500/50 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
-                            title="Delete document"
-                          >
-                            {deletingId === doc.id ? '…' : '🗑️'}
-                          </button>
+                          {doc.accessLevel !== 'READ' && (
+                            <button
+                              onClick={() => {
+                                setEditingDoc(doc);
+                                setEditTitle(doc.title);
+                                setEditCategory(doc.category);
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-white/10 hover:border-white/20 text-xs text-gray-400 hover:text-white transition-colors"
+                              title="Edit metadata"
+                            >
+                              ✏️
+                            </button>
+                          )}
+
+                          {(doc.accessLevel === 'OWNER' ||
+                            doc.accessLevel === 'ADMIN' ||
+                            !doc.accessLevel) && (
+                            <button
+                              onClick={() => handleDelete(doc)}
+                              disabled={deletingId === doc.id}
+                              className="px-2.5 py-1.5 rounded-lg border border-red-500/20 hover:border-red-500/50 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                              title="Delete document"
+                            >
+                              {deletingId === doc.id ? '…' : '🗑️'}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -685,9 +855,222 @@ export default function DocumentsView({
         </div>
       )}
 
+      {/* ── Document Sharing & Permissions Modal (Phase 4) ─── */}
+      {sharingDoc && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="share-dialog-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+        >
+          <div className="card max-w-2xl w-full bg-gray-900 border-white/20 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-white/10 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl" aria-hidden="true">🔗</span>
+                  <h3 id="share-dialog-title" className="text-lg font-bold text-white">
+                    Share Document
+                  </h3>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Manage access permissions for <span className="font-semibold text-gray-200">"{sharingDoc.title}"</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setSharingDoc(null)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Alerts */}
+            {shareError && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center justify-between">
+                <span>⚠️ {shareError}</span>
+                <button onClick={() => setShareError(null)}>✕</button>
+              </div>
+            )}
+            {shareSuccess && (
+              <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-xs flex items-center justify-between">
+                <span>✅ {shareSuccess}</span>
+                <button onClick={() => setShareSuccess(null)}>✕</button>
+              </div>
+            )}
+
+            {/* Grant Access Form */}
+            <form onSubmit={handleGrantPermission} className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-4">
+              <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+                <span>➕</span> Grant Access to Registered Recipient
+              </h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 mb-1">
+                    Select Recipient
+                  </label>
+                  {recipients.length === 0 ? (
+                    <div className="text-xs text-gray-500 italic p-2 border border-white/10 rounded-lg">
+                      No other registered users available
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedRecipientId}
+                      onChange={(e) => setSelectedRecipientId(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                      required
+                    >
+                      {recipients.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.name} ({user.email}) [{user.role}]
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 mb-1">
+                    Permission Level
+                  </label>
+                  <select
+                    value={selectedPerm}
+                    onChange={(e) => setSelectedPerm(e.target.value as 'READ' | 'EDIT')}
+                    className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  >
+                    <option value="READ">READ (View metadata & Download)</option>
+                    <option value="EDIT">EDIT (View, Download & Edit Metadata)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={grantingPerm || recipients.length === 0}
+                  className="btn-primary text-xs px-4 py-2 flex items-center gap-2"
+                >
+                  {grantingPerm ? (
+                    <>
+                      <span className="inline-block animate-spin">⏳</span>
+                      <span>Granting…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>🔒</span>
+                      <span>Grant Permission</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {/* Active Permissions List */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-gray-200 flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <span>👥</span> Active & Past Access Grants ({docPermissions.length})
+                </span>
+                {loadingShareData && (
+                  <span className="text-xs text-gray-500 animate-pulse">Loading…</span>
+                )}
+              </h4>
+
+              {docPermissions.length === 0 ? (
+                <div className="p-6 text-center text-xs text-gray-500 border border-dashed border-white/10 rounded-xl">
+                  This document has not been shared with any users yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-white/[0.01]">
+                  {docPermissions.map((perm) => {
+                    const isRevoked = Boolean(perm.revokedAt);
+                    const recipientUser = perm.user;
+                    const granter = perm.grantedBy;
+
+                    return (
+                      <div
+                        key={perm.id}
+                        className="p-3.5 flex items-center justify-between gap-4 text-xs hover:bg-white/[0.02] transition-colors"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-white">
+                              {recipientUser?.name || 'Unknown User'}
+                            </span>
+                            <span className="text-gray-500">({recipientUser?.email})</span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                                perm.permission === 'EDIT'
+                                  ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                              }`}
+                            >
+                              {perm.permission}
+                            </span>
+                            {isRevoked ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+                                Revoked
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-500/20 text-green-400 border border-green-500/30">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            Granted by {granter?.name || 'Owner'} on{' '}
+                            {new Date(perm.createdAt).toLocaleDateString()}
+                            {isRevoked && ` · Revoked on ${new Date(perm.revokedAt!).toLocaleDateString()}`}
+                          </div>
+                        </div>
+
+                        <div>
+                          {!isRevoked ? (
+                            <button
+                              onClick={() => handleRevokePermission(recipientUser._id)}
+                              disabled={revokingUserId === recipientUser._id}
+                              className="px-3 py-1 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium transition-colors"
+                            >
+                              {revokingUserId === recipientUser._id ? 'Revoking…' : 'Revoke Access'}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                setSelectedRecipientId(recipientUser._id);
+                                setSelectedPerm(perm.permission);
+                              }}
+                              className="px-2.5 py-1 rounded-lg border border-white/10 hover:border-white/20 text-gray-400 hover:text-white transition-colors text-[11px]"
+                            >
+                              Re-grant
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end pt-4 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setSharingDoc(null)}
+                className="px-4 py-2 rounded-lg border border-white/15 text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Footer ──────────────────────────────────────────── */}
       <footer className="py-6 px-6 border-t border-white/10 text-center text-xs text-gray-600">
-        TrustVault — Snovasys Fresher Hiring Challenge 2026 &nbsp;·&nbsp; Phase 3: Secure Document Management
+        TrustVault — Snovasys Fresher Hiring Challenge 2026 &nbsp;·&nbsp; Phase 4: Document Sharing and Permissions
       </footer>
     </div>
   );
