@@ -1,0 +1,32 @@
+# ─── Dependencies ────────────────────────────────────────────
+node_modules/
+
+# ─── Build outputs ───────────────────────────────────────────
+dist/
+build/
+.vite/
+
+# ─── Environment / Secrets ───────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# ─── Logs ────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+
+# ─── OS / Editor ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ─── TypeScript cache ────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── Test coverage ───────────────────────────────────────────
+coverage/
