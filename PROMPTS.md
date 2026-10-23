@@ -100,5 +100,32 @@ Each entry includes:
 
 ---
 
+### Entry 005
+- **Date:** 2026-10-19
+- **Phase:** Phase 5 — Audit Trail and Security Monitoring
+- **Tool:** Antigravity (Google DeepMind)
+- **Prompt:**
+  ```
+  Implement a reliable application audit trail and an administrator-only audit dashboard:
+  - Mongoose AuditLog model with actorId (nullable), action (enum), documentId (nullable), targetUserId, outcome (SUCCESS, DENIED, SYSTEM_FAILURE), timestamp, requestId, and bounded safe metadata.
+  - Compound indexes on timestamp, actorId, documentId, action, outcome.
+  - Central audit service with asynchronous error resilience and strict metadata sanitization (flat primitives only, no passwords/tokens/cookies/document content).
+  - Correlation ID middleware (X-Request-Id) attaching UUID to every request and response.
+  - Instrument auth routes (REGISTER_SUCCESS, LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT_SUCCESS).
+  - Instrument document routes (DOCUMENT_UPLOADED, UPLOAD_REJECTED, DOCUMENT_VIEWED, DOCUMENT_DOWNLOADED, DOCUMENT_UPDATED, DOCUMENT_DELETED, DOCUMENT_ACCESS_DENIED, DOCUMENT_DELETE_DENIED, PERMISSION_GRANTED, PERMISSION_REVOKED, PERMISSION_CHANGE_DENIED).
+  - GET /api/v1/audit-logs restricted to authenticated administrators (Role.ADMIN) with pagination and filters (actorId, documentId, action, outcome, date range).
+  - Comprehensive automated security test suite (21 tests in backend/tests/audit.test.ts) bringing total test count to 92.
+  - Frontend administrator audit activity dashboard (AuditLogView.tsx) with live event log, stats cards, filtering by event action/outcome, request ID correlation copying, metadata inspector modal, pagination, and dark mode design.
+  - Update README.md, THREATS.md, and PROMPTS.md documenting that this is an application-level audit trail.
+  ```
+- **Real Challenges & Corrections:**
+  1. *Flat Primitive Metadata Enforcement*: To prevent developers from inadvertently passing rich objects with nested tokens or user hashes into audit logs, implemented dual-layer defense: custom key blacklist + string length truncation in `auditService.sanitizeMetadata`, and a custom Mongoose validator on `auditLogSchema.metadata` rejecting nested objects and arrays.
+  2. *Unauthenticated Event Attribution*: In failed login attempts (`LOGIN_FAILED`), the actor may be an unknown user or someone mistyping a password. Structured `actorId` as nullable, while capturing the sanitized `attemptedEmail` safely in metadata for security analysis without logging password attempts.
+  3. *Unused Type Warning in TypeScript*: `AuditOutcome` was initially imported but not referenced as a type value in `AuditLogView.tsx`. Refactored imports to satisfy TypeScript strict compiler flags (`tsc -b`).
+  4. *Application vs Hardware Audit Distinction*: Documented transparently in the UI and README that this is an application-level audit trail in MongoDB, not cryptographically tamper-proof hardware storage (WORM), clarifying architecture for technical interview defense.
+- **Output Used:** Yes — 92/92 tests passing across 5 test suites; frontend verified with clean production build.
+
+---
+
 > **Note to reviewers:** Every AI-assisted design decision and line of code was reviewed and verified by the developer. The developer can defend all architectural and security implementations during technical interviews.
 

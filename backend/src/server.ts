@@ -15,10 +15,15 @@ import cookieParser from 'cookie-parser';
 import healthRouter from './routes/health';
 import authRouter from './routes/auth';
 import documentsRouter from './routes/documents';
+import auditLogsRouter from './routes/auditLogs';
 import { connectDB, disconnectDB } from './lib/db';
+import { requestIdMiddleware } from './middleware/requestId';
 
 // ── App setup ────────────────────────────────────────────────
 const app = express();
+
+// Assign or propagate request ID for end-to-end audit tracing
+app.use(requestIdMiddleware);
 
 // Parse incoming JSON bodies
 app.use(express.json());
@@ -26,11 +31,18 @@ app.use(express.json());
 // Parse cookies — required to read the HttpOnly JWT token
 app.use(cookieParser());
 
-// CORS — only allow requests from the configured frontend origin.
+// CORS — only allow requests from configured frontend origins.
+// CORS_ORIGIN may be a single URL or a comma-separated list of URLs.
 // credentials: true is required for cookies to be sent cross-origin.
+const rawOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+const allowedOrigins = rawOrigins.length === 1 ? rawOrigins[0] : rawOrigins;
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,   // allow cookies in cross-origin requests
   })
@@ -39,8 +51,10 @@ app.use(
 // ── Routes ───────────────────────────────────────────────────
 app.use('/health', healthRouter);
 app.use('/auth',   authRouter);
-app.use('/api/v1/documents', documentsRouter);
-app.use('/documents',        documentsRouter); // Convenient alias
+app.use('/api/v1/documents',  documentsRouter);
+app.use('/documents',         documentsRouter); // Convenient alias
+app.use('/api/v1/audit-logs', auditLogsRouter);
+app.use('/audit-logs',        auditLogsRouter); // Convenient alias
 
 // 404 handler — catches any route that didn't match above
 app.use((_req: Request, res: Response) => {

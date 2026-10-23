@@ -28,6 +28,9 @@ import {
   MAX_FILE_SIZE_BYTES,
   sanitizeFilename,
 } from '../lib/fileValidation';
+import { auditService } from '../services/auditService';
+import { AuditAction, AuditOutcome } from '../models/AuditLog';
+import { getRequestId } from '../middleware/requestId';
 
 const router = Router();
 
@@ -118,6 +121,13 @@ router.post(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.file) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.UPLOAD_REJECTED,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+          metadata: { reason: 'No file attached' },
+        });
         res.status(400).json({ error: 'No file attached to upload request' });
         return;
       }
@@ -125,6 +135,13 @@ router.post(
       // 1. Validate metadata fields
       const metaResult = uploadMetadataSchema.safeParse(req.body);
       if (!metaResult.success) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.UPLOAD_REJECTED,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+          metadata: { reason: 'Metadata validation failed' },
+        });
         res.status(400).json({
           error: 'Validation failed',
           details: metaResult.error.flatten().fieldErrors,
@@ -142,6 +159,13 @@ router.post(
       );
 
       if (!fileValidation.valid) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.UPLOAD_REJECTED,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+          metadata: { reason: fileValidation.error || 'Invalid file format or content' },
+        });
         res.status(400).json({ error: fileValidation.error });
         return;
       }
@@ -170,6 +194,20 @@ router.post(
           originalFilename,
           detectedMimeType,
           sizeBytes,
+        });
+
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.DOCUMENT_UPLOADED,
+          documentId: doc._id,
+          outcome: AuditOutcome.SUCCESS,
+          requestId: getRequestId(req),
+          metadata: {
+            title: doc.title,
+            category: doc.category,
+            sizeBytes: doc.sizeBytes,
+            mimeType: doc.detectedMimeType,
+          },
         });
 
         res.status(201).json({
@@ -284,11 +322,29 @@ router.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFu
 
     const accessLevel = await documentAccessService.getUserAccessLevel(req.user!, doc);
 
+    await auditService.record({
+      actorId: req.user!.userId,
+      action: AuditAction.DOCUMENT_VIEWED,
+      documentId: doc._id,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: { title: doc.title, accessLevel },
+    });
+
     res.status(200).json({
       document: toSafeDocument(doc, accessLevel),
     });
   } catch (err) {
     if (err instanceof DocumentAccessError) {
+      if (err.statusCode === 403) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.DOCUMENT_ACCESS_DENIED,
+          documentId: req.params.id,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+        });
+      }
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
@@ -325,12 +381,33 @@ router.patch('/:id', requireAuth, async (req: Request, res: Response, next: Next
 
     await doc.save();
 
+    await auditService.record({
+      actorId: req.user!.userId,
+      action: AuditAction.DOCUMENT_UPDATED,
+      documentId: doc._id,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: {
+        updatedTitle: result.data.title !== undefined,
+        updatedCategory: result.data.category !== undefined,
+      },
+    });
+
     res.status(200).json({
       message: 'Document metadata updated successfully',
       document: toSafeDocument(doc),
     });
   } catch (err) {
     if (err instanceof DocumentAccessError) {
+      if (err.statusCode === 403) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.DOCUMENT_UPDATE_DENIED,
+          documentId: req.params.id,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+        });
+      }
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
@@ -360,9 +437,27 @@ router.delete('/:id', requireAuth, async (req: Request, res: Response, next: Nex
     // 3. Delete database record
     await Document.findByIdAndDelete(doc._id);
 
+    await auditService.record({
+      actorId: req.user!.userId,
+      action: AuditAction.DOCUMENT_DELETED,
+      documentId: doc._id,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: { title: doc.title },
+    });
+
     res.status(200).json({ message: 'Document deleted successfully' });
   } catch (err) {
     if (err instanceof DocumentAccessError) {
+      if (err.statusCode === 403) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.DOCUMENT_DELETE_DENIED,
+          documentId: req.params.id,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+        });
+      }
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
@@ -384,6 +479,16 @@ router.get('/:id/download', requireAuth, async (req: Request, res: Response, nex
     const fileStream = await storageService.getFileStream(doc.storageKey);
 
     const safeFilename = sanitizeFilename(doc.originalFilename);
+
+    await auditService.record({
+      actorId: req.user!.userId,
+      action: AuditAction.DOCUMENT_DOWNLOADED,
+      documentId: doc._id,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: { filename: safeFilename, sizeBytes: doc.sizeBytes },
+    });
+
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${encodeURIComponent(safeFilename)}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`
@@ -398,6 +503,15 @@ router.get('/:id/download', requireAuth, async (req: Request, res: Response, nex
     await pipeline(fileStream, res);
   } catch (err) {
     if (err instanceof DocumentAccessError) {
+      if (err.statusCode === 403) {
+        await auditService.record({
+          actorId: req.user!.userId,
+          action: AuditAction.DOCUMENT_ACCESS_DENIED,
+          documentId: req.params.id,
+          outcome: AuditOutcome.DENIED,
+          requestId: getRequestId(req),
+        });
+      }
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
@@ -484,6 +598,16 @@ router.put(
         .populate('userId', 'name email role')
         .populate('grantedBy', 'name email role');
 
+      await auditService.record({
+        actorId: req.user!.userId,
+        action: AuditAction.PERMISSION_GRANTED,
+        documentId: doc._id,
+        targetUserId: recipient._id,
+        outcome: AuditOutcome.SUCCESS,
+        requestId: getRequestId(req),
+        metadata: { permission },
+      });
+
       res.status(200).json({
         message: `Granted ${permission} permission to ${recipient.email}`,
         permission: {
@@ -499,6 +623,16 @@ router.put(
       });
     } catch (err) {
       if (err instanceof DocumentAccessError) {
+        if (err.statusCode === 403) {
+          await auditService.record({
+            actorId: req.user!.userId,
+            action: AuditAction.PERMISSION_CHANGE_DENIED,
+            documentId: req.params.id,
+            targetUserId: req.params.userId,
+            outcome: AuditOutcome.DENIED,
+            requestId: getRequestId(req),
+          });
+        }
         res.status(err.statusCode).json({ error: err.message });
         return;
       }
@@ -594,9 +728,28 @@ router.delete(
       perm.revokedAt = new Date();
       await perm.save();
 
+      await auditService.record({
+        actorId: req.user!.userId,
+        action: AuditAction.PERMISSION_REVOKED,
+        documentId: doc._id,
+        targetUserId: recipientUserId,
+        outcome: AuditOutcome.SUCCESS,
+        requestId: getRequestId(req),
+      });
+
       res.status(200).json({ message: 'Permission revoked successfully' });
     } catch (err) {
       if (err instanceof DocumentAccessError) {
+        if (err.statusCode === 403) {
+          await auditService.record({
+            actorId: req.user!.userId,
+            action: AuditAction.PERMISSION_CHANGE_DENIED,
+            documentId: req.params.id,
+            targetUserId: req.params.userId,
+            outcome: AuditOutcome.DENIED,
+            requestId: getRequestId(req),
+          });
+        }
         res.status(err.statusCode).json({ error: err.message });
         return;
       }

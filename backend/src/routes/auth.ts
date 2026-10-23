@@ -36,6 +36,9 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import User, { Role } from '../models/User';
 import { requireAuth } from '../middleware/auth';
+import { auditService } from '../services/auditService';
+import { AuditAction, AuditOutcome } from '../models/AuditLog';
+import { getRequestId } from '../middleware/requestId';
 
 const router = Router();
 
@@ -133,6 +136,14 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     // 5. Issue cookie and return safe user object (no passwordHash)
     issueTokenCookie(res, user._id.toString(), user.role);
 
+    await auditService.record({
+      actorId: user._id,
+      action: AuditAction.REGISTER_SUCCESS,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: { email: user.email, role: user.role },
+    });
+
     res.status(201).json({
       message: 'Account created successfully',
       user: {
@@ -179,6 +190,15 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
     }
 
     if (!user || !passwordValid) {
+      // Record failed login audit event (safe metadata only: attempted email, actorId null or found)
+      await auditService.record({
+        actorId: user?._id || null,
+        action: AuditAction.LOGIN_FAILED,
+        outcome: AuditOutcome.DENIED,
+        requestId: getRequestId(req),
+        metadata: { attemptedEmail: email.toLowerCase() },
+      });
+
       // Same message for both "user not found" and "wrong password"
       // to prevent user enumeration (THREATS.md T04)
       res.status(401).json({ error: 'Invalid email or password' });
@@ -187,6 +207,15 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
 
     // 4. Issue JWT cookie
     issueTokenCookie(res, user._id.toString(), user.role);
+
+    // Record successful login audit event
+    await auditService.record({
+      actorId: user._id,
+      action: AuditAction.LOGIN_SUCCESS,
+      outcome: AuditOutcome.SUCCESS,
+      requestId: getRequestId(req),
+      metadata: { email: user.email, role: user.role },
+    });
 
     res.status(200).json({
       message: 'Logged in successfully',
@@ -203,7 +232,18 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
 });
 
 // ── POST /auth/logout ─────────────────────────────────────────
-router.post('/logout', (_req: Request, res: Response): void => {
+router.post('/logout', async (req: Request, res: Response): Promise<void> => {
+  let actorId: string | null = null;
+  const token: string | undefined = req.cookies?.token;
+  if (token && process.env.JWT_SECRET) {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as { userId: string };
+      actorId = payload.userId;
+    } catch {
+      // Ignore token decode error on logout
+    }
+  }
+
   // Clear the cookie by setting maxAge to 0.
   // The client has no way to delete an HttpOnly cookie themselves —
   // only the server can do this.
@@ -212,6 +252,13 @@ router.post('/logout', (_req: Request, res: Response): void => {
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
+  });
+
+  await auditService.record({
+    actorId,
+    action: AuditAction.LOGOUT_SUCCESS,
+    outcome: AuditOutcome.SUCCESS,
+    requestId: getRequestId(req),
   });
 
   res.status(200).json({ message: 'Logged out successfully' });

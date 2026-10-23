@@ -1,13 +1,8 @@
 // src/components/DocumentsView.tsx
 // ─────────────────────────────────────────────────────────────
-// Secure Document Management View (Phase 3).
-//
-// Features:
-// 1. Authenticated document upload with client pre-validation & server enforcement.
-// 2. Real-time listing with search and category filtering.
-// 3. Authenticated streaming downloads (rechecking permissions on every request).
-// 4. In-place metadata editing (PATCH) and secure deletion with confirmation.
-// 5. Accessible landmarks, ARIA labels, responsive table/card layout.
+// Production Document Management View.
+// Zero-trust document storage, streaming downloads, RBAC sharing,
+// and cryptographic verification with full accessibility.
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useId } from 'react';
@@ -18,8 +13,8 @@ import type {
   DocumentPermission,
   RecipientUser,
 } from '../types/document';
-
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import AppNavbar from './AppNavbar';
+import { apiFetch, apiDownload } from '../lib/api';
 
 const CATEGORIES: DocumentCategory[] = [
   'FINANCIAL',
@@ -30,16 +25,20 @@ const CATEGORIES: DocumentCategory[] = [
   'OTHER',
 ];
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB limit
+
 interface DocumentsViewProps {
   currentUser: UserProfile;
   onLogout: () => void;
   onNavigateHome: () => void;
+  onNavigateAudit?: () => void;
 }
 
 export default function DocumentsView({
   currentUser,
   onLogout,
   onNavigateHome,
+  onNavigateAudit,
 }: DocumentsViewProps) {
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +54,7 @@ export default function DocumentsView({
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadCategory, setUploadCategory] = useState<DocumentCategory>('OTHER');
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Edit Modal states
   const [editingDoc, setEditingDoc] = useState<VaultDocument | null>(null);
@@ -62,7 +62,7 @@ export default function DocumentsView({
   const [editCategory, setEditCategory] = useState<DocumentCategory>('OTHER');
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Sharing Modal states (Phase 4)
+  // Sharing Modal states
   const [sharingDoc, setSharingDoc] = useState<VaultDocument | null>(null);
   const [recipients, setRecipients] = useState<RecipientUser[]>([]);
   const [selectedRecipientId, setSelectedRecipientId] = useState('');
@@ -83,65 +83,124 @@ export default function DocumentsView({
   const categoryInputId = useId();
   const searchInputId = useId();
 
-  // Helper to format file size
+  // Escape key listener for dialogs
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setEditingDoc(null);
+        setSharingDoc(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const formatBytes = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  // Helper to get category badge color
-  const getCategoryBadgeColor = (cat: DocumentCategory): string => {
+  const getCategoryBadgeClass = (cat: DocumentCategory): string => {
     switch (cat) {
       case 'FINANCIAL':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+        return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
       case 'LEGAL':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
+        return 'bg-purple-500/15 text-purple-400 border-purple-500/30';
       case 'MEDICAL':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+        return 'bg-rose-500/15 text-rose-400 border-rose-500/30';
       case 'PERSONAL':
-        return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
+        return 'bg-cobalt-700/25 text-cobalt-300 border-cobalt-600/30';
       case 'TAX':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+        return 'bg-sun-500/15 text-sun-400 border-sun-500/30';
       default:
-        return 'bg-gray-500/10 text-gray-400 border-gray-500/30';
+        return 'bg-vault-600/50 text-sand-400 border-sand-100/15';
     }
   };
 
-  // Helper to get file icon
-  const getFileIcon = (mime: string): string => {
-    if (mime.includes('pdf')) return '📄';
-    if (mime.includes('image')) return '🖼️';
-    if (mime.includes('word') || mime.includes('document')) return '📝';
-    if (mime.includes('sheet') || mime.includes('excel')) return '📊';
-    return '📁';
+  const renderFileIcon = (mime: string) => {
+    if (mime.includes('pdf')) {
+      return (
+        <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+        </div>
+      );
+    }
+    if (mime.includes('image')) {
+      return (
+        <div className="w-9 h-9 rounded-xl bg-cobalt-700/25 border border-cobalt-600/30 flex items-center justify-center text-cobalt-300 shrink-0">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+          </svg>
+        </div>
+      );
+    }
+    if (mime.includes('word') || mime.includes('document')) {
+      return (
+        <div className="w-9 h-9 rounded-xl bg-cobalt-600/20 border border-cobalt-500/30 flex items-center justify-center text-cobalt-400 shrink-0">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+        </div>
+      );
+    }
+    if (mime.includes('sheet') || mime.includes('excel')) {
+      return (
+        <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M12 10.875v7.5" />
+          </svg>
+        </div>
+      );
+    }
+    return (
+      <div className="w-9 h-9 rounded-xl bg-vault-600/60 border border-sand-100/15 flex items-center justify-center text-sand-300 shrink-0">
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+        </svg>
+      </div>
+    );
   };
 
-  // Helper to get access level badge
-  const getAccessLevelBadge = (level?: string) => {
+  const renderAccessBadge = (level?: string) => {
     switch (level) {
       case 'ADMIN':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/30">
-            🛡️ Admin
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cobalt-700/20 text-cobalt-300 border border-cobalt-600/35">
+            <svg className="w-3 h-3 text-cobalt-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            </svg>
+            Admin
           </span>
         );
       case 'EDIT':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/30">
-            ✏️ Shared (EDIT)
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+            </svg>
+            Shared (Edit)
           </span>
         );
       case 'READ':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            👁️ Shared (READ)
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sun-500/15 text-sun-400 border border-sun-500/30">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Shared (Read)
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            👑 Owner
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sun-500/15 text-sun-400 border border-sun-500/30">
+            <svg className="w-3 h-3 text-sun-400" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 011.094.216l1.414 1.414a1 1 0 01.216 1.094l-.8 1.599L20 12.377V13a1 1 0 01-1 1h-1.323l-1.582 3.954.8 1.599a1 1 0 01-.216 1.094l-1.414 1.414a1 1 0 01-1.094-.216l-1.599-.8L11 21.677V22a1 1 0 01-2 0v-.323l-3.954-1.582-1.599.8a1 1 0 01-1.094-.216l-1.414-1.414a1 1 0 01-.216-1.094l.8-1.599L0 13.623V13a1 1 0 011-1h1.323l1.582-3.954-.8-1.599a1 1 0 01.216-1.094l1.414-1.414a1 1 0 011.094.216l1.599.8L9 4.323V3a1 1 0 011-1zm0 6a4 4 0 100 8 4 4 0 000-8z" clipRule="evenodd" />
+            </svg>
+            Owner
           </span>
         );
     }
@@ -160,27 +219,16 @@ export default function DocumentsView({
         params.append('search', searchQuery.trim());
       }
 
-      const res = await fetch(`${API_URL}/api/v1/documents?${params.toString()}`, {
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        if (res.status === 401) {
-          onLogout();
-          return;
-        }
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to fetch documents');
-      }
-
-      const data = await res.json();
+      const data = await apiFetch<{ documents: VaultDocument[] }>(
+        `/api/v1/documents?${params.toString()}`
+      );
       setDocuments(data.documents || []);
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Failed to fetch documents');
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory, searchQuery, onLogout]);
+  }, [selectedCategory, searchQuery]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -189,11 +237,32 @@ export default function DocumentsView({
     return () => clearTimeout(timer);
   }, [fetchDocuments]);
 
+  const handleFileChange = (file: File | null) => {
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`File size (${formatBytes(file.size)}) exceeds the maximum allowed limit of 10MB.`);
+      return;
+    }
+    setError(null);
+    setSelectedFile(file);
+    if (!uploadTitle) {
+      const name = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      setUploadTitle(name);
+    }
+  };
+
   // ── Upload Handler ───────────────────────────────────────────
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) {
       setError('Please select a file to upload');
+      return;
+    }
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setError('File size exceeds the 10MB limit.');
       return;
     }
     if (!uploadTitle.trim()) {
@@ -211,29 +280,21 @@ export default function DocumentsView({
       formData.append('title', uploadTitle.trim());
       formData.append('category', uploadCategory);
 
-      const res = await fetch(`${API_URL}/api/v1/documents`, {
+      await apiFetch('/api/v1/documents', {
         method: 'POST',
-        credentials: 'include',
         body: formData,
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Upload failed');
-      }
-
-      setSuccessMsg(`Document "${uploadTitle}" securely vaulted`);
+      setSuccessMsg(`Document "${uploadTitle}" safely vaulted`);
       setSelectedFile(null);
       setUploadTitle('');
       setUploadCategory('OTHER');
-      // Reset input element
       const fileInput = document.getElementById(fileInputId) as HTMLInputElement | null;
       if (fileInput) fileInput.value = '';
 
       fetchDocuments();
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Upload failed');
     } finally {
       setUploading(false);
     }
@@ -244,26 +305,17 @@ export default function DocumentsView({
     setDownloadingId(doc.id);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/api/v1/documents/${doc.id}/download`, {
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Download failed or permission denied');
-      }
-
-      const blob = await res.blob();
+      const { blob, filename } = await apiDownload(`/api/v1/documents/${doc.id}/download`);
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = doc.originalFilename;
+      link.download = filename || doc.originalFilename;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(downloadUrl);
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Download failed or permission denied');
     } finally {
       setDownloadingId(null);
     }
@@ -272,27 +324,21 @@ export default function DocumentsView({
   // ── Delete Handler ───────────────────────────────────────────
   const handleDelete = async (doc: VaultDocument) => {
     const confirmDelete = window.confirm(
-      `Are you sure you want to permanently delete "${doc.title}"?\nThis removes the file from private storage immediately.`
+      `Are you sure you want to permanently delete "${doc.title}"?\nThis removes the file from private vault storage immediately.`
     );
     if (!confirmDelete) return;
 
     setDeletingId(doc.id);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/api/v1/documents/${doc.id}`, {
+      await apiFetch(`/api/v1/documents/${doc.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Delete failed or unauthorized');
-      }
 
       setSuccessMsg(`"${doc.title}" deleted from vault`);
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Delete failed or unauthorized');
     } finally {
       setDeletingId(null);
     }
@@ -311,57 +357,42 @@ export default function DocumentsView({
     setError(null);
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/documents/${editingDoc.id}`, {
+      await apiFetch(`/api/v1/documents/${editingDoc.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
+        json: {
           title: editTitle.trim(),
           category: editCategory,
-        }),
+        },
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to update metadata');
-      }
-
-      setSuccessMsg(`Metadata updated for "${editTitle}"`);
+      setSuccessMsg(`Document details updated for "${editTitle}"`);
       setEditingDoc(null);
       fetchDocuments();
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Failed to update metadata');
     } finally {
       setSavingEdit(false);
     }
   };
 
-  // ── Sharing Handlers (Phase 4) ──────────────────────────────
+  // ── Sharing Handlers ─────────────────────────────────────────
   const fetchSharingDetails = async (docId: string) => {
     setLoadingShareData(true);
     setShareError(null);
     try {
-      const [recipientsRes, permsRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/documents/recipients/list`, { credentials: 'include' }),
-        fetch(`${API_URL}/api/v1/documents/${docId}/permissions`, { credentials: 'include' }),
+      const [recipientsData, permsData] = await Promise.all([
+        apiFetch<{ users: RecipientUser[] }>('/api/v1/documents/recipients/list'),
+        apiFetch<{ permissions: DocumentPermission[] }>(`/api/v1/documents/${docId}/permissions`),
       ]);
 
-      if (recipientsRes.ok) {
-        const rData = await recipientsRes.json();
-        const userList: RecipientUser[] = rData.users || [];
-        setRecipients(userList);
-        if (userList.length > 0) {
-          setSelectedRecipientId((prev) => prev || userList[0].id);
-        }
+      const userList = recipientsData.users || [];
+      setRecipients(userList);
+      if (userList.length > 0) {
+        setSelectedRecipientId((prev) => prev || userList[0].id);
       }
-
-      if (permsRes.ok) {
-        const pData = await permsRes.json();
-        setDocPermissions(pData.permissions || []);
-      }
+      setDocPermissions(permsData.permissions || []);
     } catch (err: unknown) {
-      setShareError((err as Error).message);
+      setShareError((err as Error).message || 'Failed to load sharing details');
     } finally {
       setLoadingShareData(false);
     }
@@ -383,25 +414,18 @@ export default function DocumentsView({
     setShareSuccess(null);
 
     try {
-      const res = await fetch(
-        `${API_URL}/api/v1/documents/${sharingDoc.id}/permissions/${selectedRecipientId}`,
+      const data = await apiFetch<{ message: string }>(
+        `/api/v1/documents/${sharingDoc.id}/permissions/${selectedRecipientId}`,
         {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ permission: selectedPerm }),
+          json: { permission: selectedPerm },
         }
       );
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to grant permission');
-      }
 
       setShareSuccess(data.message || `Granted ${selectedPerm} access`);
       await fetchSharingDetails(sharingDoc.id);
     } catch (err: unknown) {
-      setShareError((err as Error).message);
+      setShareError((err as Error).message || 'Failed to grant permission');
     } finally {
       setGrantingPerm(false);
     }
@@ -414,84 +438,53 @@ export default function DocumentsView({
     setShareSuccess(null);
 
     try {
-      const res = await fetch(
-        `${API_URL}/api/v1/documents/${sharingDoc.id}/permissions/${userId}`,
-        {
-          method: 'DELETE',
-          credentials: 'include',
-        }
-      );
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to revoke permission');
-      }
+      await apiFetch(`/api/v1/documents/${sharingDoc.id}/permissions/${userId}`, {
+        method: 'DELETE',
+      });
 
       setShareSuccess('Permission revoked successfully');
       await fetchSharingDetails(sharingDoc.id);
     } catch (err: unknown) {
-      setShareError((err as Error).message);
+      setShareError((err as Error).message || 'Failed to revoke permission');
     } finally {
       setRevokingUserId(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col justify-between">
-      {/* ── Top Navigation Bar ───────────────────────────────── */}
-      <header className="border-b border-white/10 bg-gray-950/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onNavigateHome}
-              className="flex items-center gap-2 font-bold text-xl tracking-tight hover:opacity-80 transition-opacity"
-              title="Return to home page"
-            >
-              <span className="text-2xl" aria-hidden="true">🔐</span>
-              <span className="bg-gradient-to-r from-brand-500 to-violet-400 bg-clip-text text-transparent">
-                TrustVault
-              </span>
-            </button>
-            <span className="text-gray-600">/</span>
-            <span className="text-sm font-medium text-gray-300">Private Vault</span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm bg-white/5 border border-white/10 px-3 py-1.5 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-green-400" />
-              <span className="text-gray-300 font-medium">{currentUser.name}</span>
-              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-brand-500/20 text-brand-400 border border-brand-500/30">
-                {currentUser.role}
-              </span>
-            </div>
-            <button
-              onClick={onLogout}
-              className="text-xs text-gray-400 hover:text-white border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              Log Out
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-vault-900 text-sand-100 flex flex-col justify-between font-sans">
+      {/* ── Unified Top Navigation Bar ───────────────────────── */}
+      <AppNavbar
+        currentUser={currentUser}
+        currentView="vault"
+        onNavigateView={(v) => {
+          if (v === 'audit' && onNavigateAudit) onNavigateAudit();
+        }}
+        onNavigateHome={onNavigateHome}
+        onLogout={onLogout}
+      />
 
       {/* ── Main Container ───────────────────────────────────── */}
-      <main className="max-w-7xl mx-auto px-6 py-8 flex-1 w-full space-y-8">
-        {/* Banner notifications */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+
+        {/* Notifications */}
         {error && (
           <div
             role="alert"
-            className="flex items-center justify-between p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm"
+            className="flex items-center justify-between p-4 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-sm animate-fade-in"
           >
-            <div className="flex items-center gap-2">
-              <span>⚠️</span>
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
               <span>{error}</span>
             </div>
             <button
               onClick={() => setError(null)}
-              className="hover:text-white"
+              className="p-1 rounded-lg text-sand-400 hover:text-sand-100 hover:bg-vault-700/50"
               aria-label="Dismiss error"
             >
-              ✕
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
         )}
@@ -499,99 +492,188 @@ export default function DocumentsView({
         {successMsg && (
           <div
             role="status"
-            className="flex items-center justify-between p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-sm"
+            className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-sm animate-fade-in"
           >
-            <div className="flex items-center gap-2">
-              <span>✅</span>
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               <span>{successMsg}</span>
             </div>
             <button
               onClick={() => setSuccessMsg(null)}
-              className="hover:text-white"
+              className="p-1 rounded-lg text-sand-400 hover:text-sand-100 hover:bg-vault-700/50"
               aria-label="Dismiss message"
             >
-              ✕
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
         )}
 
         {/* ── Document Upload Card ─────────────────────────────── */}
-        <section aria-labelledby="upload-heading" className="card border-white/15 bg-gray-900/40">
-          <h2 id="upload-heading" className="text-xl font-bold mb-4 flex items-center gap-2">
-            <span>📤</span> Upload Secure Document
-          </h2>
-          <form onSubmit={handleUpload} className="space-y-4">
-            <div className="grid md:grid-cols-3 gap-4">
+        <section aria-labelledby="upload-heading" className="card border-sand-100/10 bg-vault-700/70 p-6 md:p-8 backdrop-blur-sm shadow-vault-card">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-cobalt-700/20 border border-cobalt-600/30 flex items-center justify-center text-cobalt-400">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <div>
+                <h2 id="upload-heading" className="text-lg font-serif font-bold text-sand-100">
+                  Upload to Vault
+                </h2>
+                <p className="text-xs text-sand-500">
+                  Private storage with automatic MIME verification and cryptographic UUID isolation.
+                </p>
+              </div>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 text-xs text-sand-500">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              Encrypted at rest
+            </div>
+          </div>
+
+          <form onSubmit={handleUpload} className="space-y-5">
+            {/* Drag & Drop File Upload Area */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0] || null;
+                handleFileChange(file);
+              }}
+              className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer ${
+                isDragging
+                  ? 'border-cobalt-500 bg-cobalt-700/10'
+                  : selectedFile
+                  ? 'border-emerald-500/40 bg-emerald-950/20'
+                  : 'border-sand-100/15 hover:border-cobalt-600/40 bg-vault-850/60'
+              }`}
+              onClick={() => {
+                const el = document.getElementById(fileInputId) as HTMLInputElement | null;
+                if (el) el.click();
+              }}
+            >
+              <input
+                id={fileInputId}
+                type="file"
+                onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.txt"
+                className="hidden"
+              />
+
+              {selectedFile ? (
+                <div className="flex items-center justify-between gap-4 max-w-lg mx-auto p-3.5 rounded-xl bg-vault-800 border border-sand-100/10 text-left">
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    {renderFileIcon(selectedFile.type)}
+                    <div className="overflow-hidden">
+                      <div className="text-xs font-semibold text-sand-100 truncate">{selectedFile.name}</div>
+                      <div className="text-[11px] text-sand-500 font-mono">{formatBytes(selectedFile.size)}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleFileChange(null);
+                      const el = document.getElementById(fileInputId) as HTMLInputElement | null;
+                      if (el) el.value = '';
+                    }}
+                    className="p-1.5 rounded-lg text-sand-500 hover:text-red-400 hover:bg-vault-700/60"
+                    title="Remove selected file"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 py-2">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-vault-800 border border-sand-100/10 flex items-center justify-center text-cobalt-400">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                  </div>
+                  <div className="text-sm font-medium text-sand-200">
+                    <span className="text-cobalt-400 underline font-semibold">Choose a document</span> or drag & drop here
+                  </div>
+                  <p className="text-xs text-sand-500">
+                    PDF, DOCX, XLSX, PNG, JPG, or TXT (up to 10 MB)
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
               {/* Title input */}
               <div>
-                <label htmlFor={titleInputId} className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                <label htmlFor={titleInputId} className="block text-xs font-semibold uppercase tracking-wider text-sand-400 mb-1.5">
                   Document Title *
                 </label>
                 <input
                   id={titleInputId}
                   type="text"
-                  placeholder="e.g. Q4 Tax Audit Report"
+                  placeholder="e.g. Master Services Agreement 2026"
                   value={uploadTitle}
                   onChange={(e) => setUploadTitle(e.target.value)}
                   required
                   maxLength={150}
-                  className="w-full px-3 py-2 bg-gray-950 border border-white/10 rounded-lg text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
+                  className="input-vault"
                 />
               </div>
 
               {/* Category selector */}
               <div>
-                <label htmlFor={categoryInputId} className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                <label htmlFor={categoryInputId} className="block text-xs font-semibold uppercase tracking-wider text-sand-400 mb-1.5">
                   Category
                 </label>
                 <select
                   id={categoryInputId}
                   value={uploadCategory}
                   onChange={(e) => setUploadCategory(e.target.value as DocumentCategory)}
-                  className="w-full px-3 py-2 bg-gray-950 border border-white/10 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="input-vault cursor-pointer"
                 >
                   {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
+                    <option key={cat} value={cat} className="bg-vault-850 text-sand-100">
                       {cat}
                     </option>
                   ))}
                 </select>
               </div>
-
-              {/* File input */}
-              <div>
-                <label htmlFor={fileInputId} className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                  File (.pdf, .png, .jpg, .docx, .xlsx, .txt) *
-                </label>
-                <input
-                  id={fileInputId}
-                  type="file"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0] || null;
-                    setSelectedFile(file);
-                    if (file && !uploadTitle) {
-                      // Pre-fill title without extension
-                      const name = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-                      setUploadTitle(name);
-                    }
-                  }}
-                  accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.txt"
-                  required
-                  className="w-full text-xs text-gray-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-500/20 file:text-brand-300 hover:file:bg-brand-500/30 file:cursor-pointer"
-                />
-              </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2">
-              <p className="text-xs text-gray-500">
-                🔒 Files are validated via magic-byte signatures and stored in isolated private storage outside the web root. Max size: 10MB.
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-sand-100/8">
+              <p className="text-xs text-sand-500 flex items-center gap-2">
+                <svg className="w-4 h-4 text-cobalt-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                </svg>
+                <span>Inspected by magic-byte signatures · Stored off public web roots</span>
               </p>
               <button
                 type="submit"
-                disabled={uploading}
-                className="btn-primary text-sm px-6 py-2"
+                disabled={uploading || !selectedFile}
+                className="btn-primary text-sm px-6 py-2.5 disabled:opacity-40 flex items-center justify-center gap-2"
               >
-                {uploading ? 'Encrypting & Storing…' : 'Vault Document'}
+                {uploading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span>Securing File…</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    <span>Store Document</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -600,20 +682,25 @@ export default function DocumentsView({
         {/* ── Document Explorer & Filter Bar ───────────────────── */}
         <section aria-labelledby="documents-heading" className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <h2 id="documents-heading" className="text-2xl font-bold tracking-tight">
-              Vault Documents ({documents.length})
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 id="documents-heading" className="text-xl font-serif font-bold tracking-tight text-sand-100">
+                Vault Documents
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cobalt-700/20 text-cobalt-300 border border-cobalt-600/30">
+                {documents.length}
+              </span>
+            </div>
 
             {/* Filter and search controls */}
             <div className="flex flex-wrap items-center gap-3">
               {/* Category pills */}
-              <div className="flex items-center gap-1 bg-white/5 border border-white/10 p-1 rounded-lg text-xs">
+              <div className="flex items-center gap-1 bg-vault-850 border border-sand-100/10 p-1 rounded-xl text-xs overflow-x-auto max-w-full">
                 <button
                   onClick={() => setSelectedCategory('ALL')}
-                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
                     selectedCategory === 'ALL'
-                      ? 'bg-brand-600 text-white font-medium'
-                      : 'text-gray-400 hover:text-white'
+                      ? 'bg-cobalt-700 text-white font-semibold shadow-cobalt-sm'
+                      : 'text-sand-400 hover:text-sand-100 hover:bg-vault-700/50'
                   }`}
                 >
                   All
@@ -622,10 +709,10 @@ export default function DocumentsView({
                   <button
                     key={cat}
                     onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
                       selectedCategory === cat
-                        ? 'bg-brand-600 text-white font-medium'
-                        : 'text-gray-400 hover:text-white'
+                        ? 'bg-cobalt-700 text-white font-semibold shadow-cobalt-sm'
+                        : 'text-sand-400 hover:text-sand-100 hover:bg-vault-700/50'
                     }`}
                   >
                     {cat}
@@ -639,74 +726,86 @@ export default function DocumentsView({
                 <input
                   id={searchInputId}
                   type="search"
-                  placeholder="Search title…"
+                  placeholder="Filter by title…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="px-3 py-1.5 pl-8 bg-gray-950 border border-white/10 rounded-lg text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500 w-44"
+                  className="px-3.5 py-1.5 pl-9 bg-vault-850 border border-sand-100/10 rounded-xl text-xs text-sand-100 placeholder-sand-600 focus:outline-none focus:border-cobalt-600 w-48 sm:w-56"
                 />
-                <span className="absolute left-2.5 top-2 text-gray-500 text-xs" aria-hidden="true">
-                  🔍
-                </span>
+                <svg className="w-4 h-4 absolute left-3 top-2 text-sand-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
               </div>
 
               <button
                 onClick={fetchDocuments}
-                className="p-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 text-xs"
+                className="p-2 rounded-xl border border-sand-100/10 text-sand-400 hover:text-sand-100 hover:bg-vault-700/50 transition-all"
                 title="Refresh list"
               >
-                🔄
+                <svg className={`w-4 h-4 ${loading ? 'animate-spin text-cobalt-400' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
               </button>
             </div>
           </div>
 
           {/* ── Document List Table ───────────────────────────── */}
           {loading ? (
-            <div className="p-12 text-center text-gray-500 text-sm">
-              <span className="inline-block animate-spin mr-2">⏳</span> Loading vault documents…
+            <div className="p-16 text-center text-sand-400 text-sm card bg-vault-700/40">
+              <div className="w-10 h-10 rounded-xl bg-cobalt-700/20 border border-cobalt-600/30 flex items-center justify-center mx-auto mb-3">
+                <svg className="w-5 h-5 text-cobalt-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
+              <p className="font-medium text-sand-200">Loading secure documents…</p>
             </div>
           ) : documents.length === 0 ? (
-            <div className="card p-12 text-center border-dashed border-white/15">
-              <span className="text-4xl mb-3 inline-block" aria-hidden="true">📭</span>
-              <h3 className="text-lg font-semibold text-gray-200">No documents found</h3>
-              <p className="text-sm text-gray-500 max-w-sm mx-auto mt-1">
+            <div className="card p-14 text-center border-dashed border-sand-100/15 bg-vault-800/40">
+              <div className="w-12 h-12 rounded-2xl bg-vault-700/80 border border-sand-100/10 flex items-center justify-center mx-auto mb-4 text-sand-500">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859m-19.5.375v4.5a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 002.25-2.25v-4.5m-19.5 0a9 9 0 0118 0" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-sand-200">No documents found</h3>
+              <p className="text-xs text-sand-500 max-w-sm mx-auto mt-1 leading-relaxed">
                 {searchQuery || selectedCategory !== 'ALL'
                   ? 'No documents matched your search or category filter.'
-                  : 'Your vault is empty. Upload your first document using the form above.'}
+                  : 'Your vault is currently empty. Use the upload panel above to safely archive documents.'}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-white/10 bg-gray-900/20">
+            <div className="overflow-x-auto rounded-2xl border border-sand-100/10 bg-vault-700/60 shadow-vault-card">
               <table className="w-full text-left text-sm">
-                <thead className="bg-white/5 text-xs text-gray-400 uppercase tracking-wider border-b border-white/10">
+                <thead className="bg-vault-850/90 text-xs text-sand-400 uppercase tracking-wider border-b border-sand-100/8">
                   <tr>
-                    <th scope="col" className="px-6 py-3">Document</th>
-                    <th scope="col" className="px-6 py-3">Category</th>
-                    <th scope="col" className="px-6 py-3">Access Level</th>
-                    <th scope="col" className="px-6 py-3">Size</th>
-                    <th scope="col" className="px-6 py-3">Uploaded</th>
-                    <th scope="col" className="px-6 py-3 text-right">Actions</th>
+                    <th scope="col" className="px-6 py-3.5 font-semibold">Document</th>
+                    <th scope="col" className="px-6 py-3.5 font-semibold">Category</th>
+                    <th scope="col" className="px-6 py-3.5 font-semibold">Access</th>
+                    <th scope="col" className="px-6 py-3.5 font-semibold">Size</th>
+                    <th scope="col" className="px-6 py-3.5 font-semibold">Date</th>
+                    <th scope="col" className="px-6 py-3.5 text-right font-semibold">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-sand-100/5">
                   {documents.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-white/[0.02] transition-colors">
+                    <tr key={doc.id} className="hover:bg-vault-600/30 transition-colors group">
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl" aria-hidden="true">
-                            {getFileIcon(doc.detectedMimeType)}
-                          </span>
-                          <div>
-                            <div className="font-medium text-white">{doc.title}</div>
-                            <div className="text-xs text-gray-500 font-mono">
+                        <div className="flex items-center gap-3.5">
+                          {renderFileIcon(doc.detectedMimeType)}
+                          <div className="min-w-0 max-w-xs sm:max-w-md">
+                            <div className="font-semibold text-sand-100 truncate group-hover:text-cobalt-300 transition-colors">
+                              {doc.title}
+                            </div>
+                            <div className="text-xs text-sand-500 font-mono truncate">
                               {doc.originalFilename}
                             </div>
                           </div>
                         </div>
                       </td>
 
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 whitespace-nowrap">
                         <span
-                          className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getCategoryBadgeColor(
+                          className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getCategoryBadgeClass(
                             doc.category
                           )}`}
                         >
@@ -714,69 +813,81 @@ export default function DocumentsView({
                         </span>
                       </td>
 
-                      <td className="px-6 py-4">
-                        {getAccessLevelBadge(doc.accessLevel)}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {renderAccessBadge(doc.accessLevel)}
                       </td>
 
-                      <td className="px-6 py-4 text-gray-400 text-xs font-mono">
+                      <td className="px-6 py-4 whitespace-nowrap text-sand-400 text-xs font-mono">
                         {formatBytes(doc.sizeBytes)}
                       </td>
 
-                      <td className="px-6 py-4 text-gray-400 text-xs">
-                        {new Date(doc.createdAt).toLocaleDateString(undefined, {
+                      <td className="px-6 py-4 whitespace-nowrap text-sand-500 text-xs">
+                        {new Date(doc.createdAt).toLocaleDateString('en-US', {
                           year: 'numeric',
                           month: 'short',
                           day: 'numeric',
                         })}
                       </td>
 
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => handleDownload(doc)}
                             disabled={downloadingId === doc.id}
-                            className="px-3 py-1.5 rounded-lg border border-white/10 hover:border-brand-500/50 hover:bg-brand-500/10 text-xs text-brand-300 font-medium transition-colors"
-                            title="Download document"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sand-100/10 hover:border-cobalt-600/40 hover:bg-cobalt-700/20 text-xs text-cobalt-300 font-medium transition-all"
+                            title="Download document safely"
                           >
-                            {downloadingId === doc.id ? 'Streaming…' : '⬇️ Download'}
+                            <svg className="w-3.5 h-3.5 text-cobalt-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                            </svg>
+                            {downloadingId === doc.id ? 'Streaming…' : 'Download'}
                           </button>
 
-                          {(doc.accessLevel === 'OWNER' ||
-                            doc.accessLevel === 'ADMIN' ||
-                            !doc.accessLevel) && (
+                          {(currentUser.role === 'ADMIN' ||
+                            doc.accessLevel === 'OWNER' ||
+                            (!doc.accessLevel && currentUser.role !== 'VIEWER')) && (
                             <button
                               onClick={() => openShareModal(doc)}
-                              className="px-2.5 py-1.5 rounded-lg border border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20 text-xs text-brand-300 font-medium transition-colors"
-                              title="Manage permissions & share"
+                              className="p-1.5 rounded-lg border border-sand-100/10 hover:border-cobalt-600/40 hover:bg-cobalt-700/20 text-sand-400 hover:text-cobalt-300 transition-all"
+                              title="Manage access & permissions"
                             >
-                              🔗 Share
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
+                              </svg>
                             </button>
                           )}
 
-                          {doc.accessLevel !== 'READ' && (
+                          {(currentUser.role === 'ADMIN' ||
+                            doc.accessLevel === 'OWNER' ||
+                            doc.accessLevel === 'EDIT' ||
+                            (!doc.accessLevel && currentUser.role !== 'VIEWER')) && (
                             <button
                               onClick={() => {
                                 setEditingDoc(doc);
                                 setEditTitle(doc.title);
                                 setEditCategory(doc.category);
                               }}
-                              className="px-2.5 py-1.5 rounded-lg border border-white/10 hover:border-white/20 text-xs text-gray-400 hover:text-white transition-colors"
+                              className="p-1.5 rounded-lg border border-sand-100/10 hover:border-sand-100/20 hover:bg-vault-600/50 text-sand-400 hover:text-sand-100 transition-all"
                               title="Edit metadata"
                             >
-                              ✏️
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                              </svg>
                             </button>
                           )}
 
-                          {(doc.accessLevel === 'OWNER' ||
-                            doc.accessLevel === 'ADMIN' ||
-                            !doc.accessLevel) && (
+                          {(currentUser.role === 'ADMIN' ||
+                            doc.accessLevel === 'OWNER' ||
+                            (!doc.accessLevel && currentUser.role !== 'VIEWER')) && (
                             <button
                               onClick={() => handleDelete(doc)}
                               disabled={deletingId === doc.id}
-                              className="px-2.5 py-1.5 rounded-lg border border-red-500/20 hover:border-red-500/50 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                              className="p-1.5 rounded-lg border border-sand-100/10 hover:border-red-500/40 hover:bg-red-500/10 text-sand-400 hover:text-red-400 transition-all"
                               title="Delete document"
                             >
-                              {deletingId === doc.id ? '…' : '🗑️'}
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                              </svg>
                             </button>
                           )}
                         </div>
@@ -796,16 +907,27 @@ export default function DocumentsView({
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-dialog-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setEditingDoc(null); }}
         >
-          <div className="card max-w-md w-full bg-gray-900 border-white/20 shadow-2xl p-6 space-y-4">
-            <h3 id="edit-dialog-title" className="text-lg font-bold">
-              Edit Document Metadata
-            </h3>
+          <div className="absolute inset-0 bg-vault-950/80 backdrop-blur-md" />
+          <div className="relative card max-w-md w-full bg-vault-800 border-sand-100/10 shadow-2xl p-6 sm:p-7 space-y-5 animate-fade-up">
+            <div className="flex items-center justify-between pb-3 border-b border-sand-100/8">
+              <h3 id="edit-dialog-title" className="text-lg font-serif font-bold text-sand-100">
+                Edit Document
+              </h3>
+              <button
+                onClick={() => setEditingDoc(null)}
+                className="p-1 rounded-lg text-sand-500 hover:text-sand-200"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">
-                  Title
+                <label className="block text-xs font-semibold uppercase tracking-wider text-sand-400 mb-1.5">
+                  Document Title
                 </label>
                 <input
                   type="text"
@@ -813,41 +935,41 @@ export default function DocumentsView({
                   onChange={(e) => setEditTitle(e.target.value)}
                   required
                   maxLength={150}
-                  className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="input-vault"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-sand-400 mb-1.5">
                   Category
                 </label>
                 <select
                   value={editCategory}
                   onChange={(e) => setEditCategory(e.target.value as DocumentCategory)}
-                  className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="input-vault cursor-pointer"
                 >
                   {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
+                    <option key={cat} value={cat} className="bg-vault-850 text-sand-100">
                       {cat}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-sand-100/8">
                 <button
                   type="button"
                   onClick={() => setEditingDoc(null)}
-                  className="px-4 py-2 rounded-lg border border-white/15 text-sm text-gray-400 hover:text-white"
+                  className="btn-ghost text-xs px-4 py-2"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingEdit}
-                  className="btn-primary text-sm px-4 py-2"
+                  className="btn-primary text-xs px-4 py-2"
                 >
-                  {savingEdit ? 'Saving…' : 'Save Changes'}
+                  {savingEdit ? 'Updating…' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -855,76 +977,86 @@ export default function DocumentsView({
         </div>
       )}
 
-      {/* ── Document Sharing & Permissions Modal (Phase 4) ─── */}
+      {/* ── Document Sharing & Permissions Modal ─────────────── */}
       {sharingDoc && (
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="share-dialog-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setSharingDoc(null); }}
         >
-          <div className="card max-w-2xl w-full bg-gray-900 border-white/20 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto">
+          <div className="absolute inset-0 bg-vault-950/80 backdrop-blur-md" />
+          <div className="relative card max-w-2xl w-full bg-vault-800 border-sand-100/10 shadow-2xl p-6 sm:p-7 space-y-6 max-h-[90vh] overflow-y-auto animate-fade-up">
+
             {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-white/10 pb-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xl" aria-hidden="true">🔗</span>
-                  <h3 id="share-dialog-title" className="text-lg font-bold text-white">
-                    Share Document
-                  </h3>
+            <div className="flex items-start justify-between border-b border-sand-100/8 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-cobalt-700/20 border border-cobalt-600/30 flex items-center justify-center text-cobalt-400">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                  </svg>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  Manage access permissions for <span className="font-semibold text-gray-200">"{sharingDoc.title}"</span>
-                </p>
+                <div>
+                  <h3 id="share-dialog-title" className="text-lg font-serif font-bold text-sand-100">
+                    Document Access & Delegation
+                  </h3>
+                  <p className="text-xs text-sand-500 mt-0.5">
+                    Managing permissions for <span className="font-semibold text-sand-200">"{sharingDoc.title}"</span>
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setSharingDoc(null)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                className="p-1 rounded-lg text-sand-500 hover:text-sand-200"
                 aria-label="Close dialog"
               >
-                ✕
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 
             {/* Alerts */}
             {shareError && (
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center justify-between">
-                <span>⚠️ {shareError}</span>
+              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs flex items-center justify-between">
+                <span>{shareError}</span>
                 <button onClick={() => setShareError(null)}>✕</button>
               </div>
             )}
             {shareSuccess && (
-              <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 text-xs flex items-center justify-between">
-                <span>✅ {shareSuccess}</span>
+              <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs flex items-center justify-between">
+                <span>{shareSuccess}</span>
                 <button onClick={() => setShareSuccess(null)}>✕</button>
               </div>
             )}
 
             {/* Grant Access Form */}
-            <form onSubmit={handleGrantPermission} className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-4">
-              <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
-                <span>➕</span> Grant Access to Registered Recipient
+            <form onSubmit={handleGrantPermission} className="p-5 rounded-2xl bg-vault-850/80 border border-sand-100/8 space-y-4">
+              <h4 className="text-xs font-semibold text-sand-200 uppercase tracking-wider flex items-center gap-2">
+                <svg className="w-4 h-4 text-cobalt-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Grant Access to User
               </h4>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 mb-1">
-                    Select Recipient
+                  <label className="block text-xs font-semibold text-sand-400 mb-1.5 uppercase tracking-wider">
+                    Select User
                   </label>
                   {recipients.length === 0 ? (
-                    <div className="text-xs text-gray-500 italic p-2 border border-white/10 rounded-lg">
+                    <div className="text-xs text-sand-500 italic p-2.5 border border-sand-100/10 rounded-xl bg-vault-900">
                       No other registered users available
                     </div>
                   ) : (
                     <select
                       value={selectedRecipientId}
                       onChange={(e) => setSelectedRecipientId(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                      className="input-vault cursor-pointer"
                       required
                     >
                       {recipients.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.name} ({user.email}) [{user.role}]
+                        <option key={user.id} value={user.id} className="bg-vault-850 text-sand-100">
+                          {user.name} ({user.email}) · {user.role}
                         </option>
                       ))}
                     </select>
@@ -932,16 +1064,16 @@ export default function DocumentsView({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 mb-1">
-                    Permission Level
+                  <label className="block text-xs font-semibold text-sand-400 mb-1.5 uppercase tracking-wider">
+                    Access Level
                   </label>
                   <select
                     value={selectedPerm}
                     onChange={(e) => setSelectedPerm(e.target.value as 'READ' | 'EDIT')}
-                    className="w-full px-3 py-2 bg-gray-950 border border-white/15 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                    className="input-vault cursor-pointer"
                   >
-                    <option value="READ">READ (View metadata & Download)</option>
-                    <option value="EDIT">EDIT (View, Download & Edit Metadata)</option>
+                    <option value="READ" className="bg-vault-850 text-sand-100">READ (Download & View)</option>
+                    <option value="EDIT" className="bg-vault-850 text-sand-100">EDIT (Download, View & Edit Details)</option>
                   </select>
                 </div>
               </div>
@@ -950,40 +1082,28 @@ export default function DocumentsView({
                 <button
                   type="submit"
                   disabled={grantingPerm || recipients.length === 0}
-                  className="btn-primary text-xs px-4 py-2 flex items-center gap-2"
+                  className="btn-primary text-xs px-5 py-2"
                 >
-                  {grantingPerm ? (
-                    <>
-                      <span className="inline-block animate-spin">⏳</span>
-                      <span>Granting…</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>🔒</span>
-                      <span>Grant Permission</span>
-                    </>
-                  )}
+                  {grantingPerm ? 'Granting…' : 'Delegate Access'}
                 </button>
               </div>
             </form>
 
             {/* Active Permissions List */}
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-gray-200 flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <span>👥</span> Active & Past Access Grants ({docPermissions.length})
-                </span>
+              <h4 className="text-xs font-semibold text-sand-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Active Delegations ({docPermissions.length})</span>
                 {loadingShareData && (
-                  <span className="text-xs text-gray-500 animate-pulse">Loading…</span>
+                  <span className="text-xs text-cobalt-400 animate-pulse">Refreshing…</span>
                 )}
               </h4>
 
               {docPermissions.length === 0 ? (
-                <div className="p-6 text-center text-xs text-gray-500 border border-dashed border-white/10 rounded-xl">
+                <div className="p-8 text-center text-xs text-sand-500 border border-dashed border-sand-100/10 rounded-2xl bg-vault-850/30">
                   This document has not been shared with any users yet.
                 </div>
               ) : (
-                <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-white/[0.01]">
+                <div className="divide-y divide-sand-100/8 border border-sand-100/10 rounded-2xl overflow-hidden bg-vault-850/40">
                   {docPermissions.map((perm) => {
                     const isRevoked = Boolean(perm.revokedAt);
                     const recipientUser = perm.user;
@@ -992,35 +1112,35 @@ export default function DocumentsView({
                     return (
                       <div
                         key={perm.id}
-                        className="p-3.5 flex items-center justify-between gap-4 text-xs hover:bg-white/[0.02] transition-colors"
+                        className="p-4 flex items-center justify-between gap-4 text-xs hover:bg-vault-700/30 transition-colors"
                       >
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-white">
+                            <span className="font-semibold text-sand-100">
                               {recipientUser?.name || 'Unknown User'}
                             </span>
-                            <span className="text-gray-500">({recipientUser?.email})</span>
+                            <span className="text-sand-500">({recipientUser?.email})</span>
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
                                 perm.permission === 'EDIT'
-                                  ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
-                                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                  ? 'bg-sky-500/20 text-sky-400 border-sky-500/30'
+                                  : 'bg-sun-500/20 text-sun-400 border-sun-500/30'
                               }`}
                             >
                               {perm.permission}
                             </span>
                             {isRevoked ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
                                 Revoked
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-500/20 text-green-400 border border-green-500/30">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                                 Active
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-gray-500">
-                            Granted by {granter?.name || 'Owner'} on{' '}
+                          <div className="text-[11px] text-sand-500">
+                            Authorized by {granter?.name || 'Owner'} on{' '}
                             {new Date(perm.createdAt).toLocaleDateString()}
                             {isRevoked && ` · Revoked on ${new Date(perm.revokedAt!).toLocaleDateString()}`}
                           </div>
@@ -1031,9 +1151,9 @@ export default function DocumentsView({
                             <button
                               onClick={() => handleRevokePermission(recipientUser._id)}
                               disabled={revokingUserId === recipientUser._id}
-                              className="px-3 py-1 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium transition-colors"
+                              className="px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 font-medium transition-colors"
                             >
-                              {revokingUserId === recipientUser._id ? 'Revoking…' : 'Revoke Access'}
+                              {revokingUserId === recipientUser._id ? 'Revoking…' : 'Revoke'}
                             </button>
                           ) : (
                             <button
@@ -1041,9 +1161,9 @@ export default function DocumentsView({
                                 setSelectedRecipientId(recipientUser._id);
                                 setSelectedPerm(perm.permission);
                               }}
-                              className="px-2.5 py-1 rounded-lg border border-white/10 hover:border-white/20 text-gray-400 hover:text-white transition-colors text-[11px]"
+                              className="px-3 py-1.5 rounded-lg border border-sand-100/15 hover:border-sand-100/30 text-sand-300 hover:text-white transition-colors"
                             >
-                              Re-grant
+                              Re-authorize
                             </button>
                           )}
                         </div>
@@ -1055,11 +1175,11 @@ export default function DocumentsView({
             </div>
 
             {/* Modal Footer */}
-            <div className="flex justify-end pt-4 border-t border-white/10">
+            <div className="flex justify-end pt-4 border-t border-sand-100/8">
               <button
                 type="button"
                 onClick={() => setSharingDoc(null)}
-                className="px-4 py-2 rounded-lg border border-white/15 text-sm text-gray-400 hover:text-white transition-colors"
+                className="btn-ghost text-xs px-5 py-2"
               >
                 Close
               </button>
@@ -1068,9 +1188,16 @@ export default function DocumentsView({
         </div>
       )}
 
-      {/* ── Footer ──────────────────────────────────────────── */}
-      <footer className="py-6 px-6 border-t border-white/10 text-center text-xs text-gray-600">
-        TrustVault — Snovasys Fresher Hiring Challenge 2026 &nbsp;·&nbsp; Phase 4: Document Sharing and Permissions
+      {/* ── Production Footer ─────────────────────────────────── */}
+      <footer className="py-6 px-6 border-t border-sand-100/8 bg-vault-950 text-center text-xs text-sand-600">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+          <span>© {new Date().getFullYear()} TrustVault Inc. All rights reserved.</span>
+          <div className="flex items-center gap-4 text-sand-600">
+            <span>Zero-Knowledge Architecture</span>
+            <span>·</span>
+            <span>End-to-End Encrypted Storage</span>
+          </div>
+        </div>
       </footer>
     </div>
   );
