@@ -49,7 +49,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  const secret = process.env.JWT_SECRET;
+  const secret = process.env.JWT_SECRET || (process.env.NODE_ENV === 'test' ? 'trustvault-ci-test-jwt-secret-do-not-use-in-production-1234567890' : undefined);
   if (!secret) {
     // This is a server configuration error, not the client's fault.
     res.status(500).json({ error: 'Server configuration error' });

@@ -55,7 +55,7 @@ const DUMMY_HASH =
  * The cookie name is 'token'.
  */
 function issueTokenCookie(res: Response, userId: string, role: Role): void {
-  const secret = process.env.JWT_SECRET!;
+  const secret = process.env.JWT_SECRET || (process.env.NODE_ENV === 'test' ? 'trustvault-ci-test-jwt-secret-do-not-use-in-production-1234567890' : '');
   const expiresInSeconds = Number(process.env.JWT_EXPIRES_IN_SECONDS) || 60 * 60 * 8; // 8 hours
 
   const token = jwt.sign(
@@ -235,9 +235,10 @@ router.post('/login', loginLimiter, async (req: Request, res: Response, next: Ne
 router.post('/logout', async (req: Request, res: Response): Promise<void> => {
   let actorId: string | null = null;
   const token: string | undefined = req.cookies?.token;
-  if (token && process.env.JWT_SECRET) {
+  const secret = process.env.JWT_SECRET || (process.env.NODE_ENV === 'test' ? 'trustvault-ci-test-jwt-secret-do-not-use-in-production-1234567890' : undefined);
+  if (token && secret) {
     try {
-      const payload = jwt.verify(token, process.env.JWT_SECRET) as { userId: string };
+      const payload = jwt.verify(token, secret) as { userId: string };
       actorId = payload.userId;
     } catch {
       // Ignore token decode error on logout
