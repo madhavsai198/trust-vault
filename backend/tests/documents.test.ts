@@ -524,7 +524,6 @@ describe('Phase 3: Secure Document Management', () => {
 
       // Temporarily mock Document.create to simulate a database failure
       const originalCreate = Document.create;
-      // @ts-expect-error Mocking Document.create for test
       Document.create = async () => {
         throw new Error('Simulated MongoDB Write Collision');
       };
