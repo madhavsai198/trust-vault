@@ -66,7 +66,7 @@ function issueTokenCookie(res: Response, userId: string, role: Role): void {
 
   res.cookie('token', token, {
     httpOnly: true,                                        // JS cannot read this cookie
-    sameSite: 'strict',                                   // CSRF protection
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // Lax in dev enables cross-port development cookies
     secure: process.env.NODE_ENV === 'production',        // HTTPS only in prod
     maxAge: expiresInSeconds * 1000,                      // milliseconds
     path: '/',
@@ -250,7 +250,7 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
   // only the server can do this.
   res.clearCookie('token', {
     httpOnly: true,
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
   });

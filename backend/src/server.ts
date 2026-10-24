@@ -31,20 +31,38 @@ app.use(express.json());
 // Parse cookies — required to read the HttpOnly JWT token
 app.use(cookieParser());
 
-// CORS — only allow requests from configured frontend origins.
+// CORS — only allow requests from configured frontend origins or local dev environments.
 // CORS_ORIGIN may be a single URL or a comma-separated list of URLs.
 // credentials: true is required for cookies to be sent cross-origin.
-const rawOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+const rawOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
-const allowedOrigins = rawOrigins.length === 1 ? rawOrigins[0] : rawOrigins;
+
+const isDev = process.env.NODE_ENV !== 'production';
 
 app.use(
   cors({
-    origin: allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (curl, server-to-server, postman, same-origin)
+      if (!origin) {
+        return callback(null, true);
+      }
+      // Check configured origins
+      if (rawOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      // In development, automatically allow any localhost or 127.0.0.1 port
+      if (isDev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID', 'Accept', 'Origin'],
+    exposedHeaders: ['Content-Disposition', 'X-Request-ID'],
     credentials: true,   // allow cookies in cross-origin requests
+    optionsSuccessStatus: 200,
   })
 );
 

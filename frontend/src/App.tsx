@@ -32,7 +32,7 @@ export default function App() {
   // Check existing session on application load
   const checkSession = useCallback(async () => {
     try {
-      const data = await apiFetch<{ user: UserProfile }>('/auth/me');
+      const data = await apiFetch<{ user: UserProfile }>('/auth/me', { silentAuth: true });
       setCurrentUser(data.user);
       setView('vault'); // If already authenticated, jump to Vault
     } catch {

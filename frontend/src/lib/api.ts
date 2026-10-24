@@ -9,7 +9,24 @@
 // 5. Never stores session tokens or credentials in localStorage.
 // ─────────────────────────────────────────────────────────────
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+const envApiUrl = import.meta.env.VITE_API_URL;
+
+export const API_BASE_URL = (() => {
+  if (typeof window !== 'undefined' && envApiUrl) {
+    try {
+      const parsed = new URL(envApiUrl, window.location.origin);
+      // Align 127.0.0.1 <-> localhost so cookies are treated as same-host by the browser
+      if (
+        (window.location.hostname === '127.0.0.1' && parsed.hostname === 'localhost') ||
+        (window.location.hostname === 'localhost' && parsed.hostname === '127.0.0.1')
+      ) {
+        parsed.hostname = window.location.hostname;
+        return parsed.origin;
+      }
+    } catch {}
+  }
+  return envApiUrl ?? 'http://localhost:4000';
+})();
 
 export class ApiError extends Error {
   statusCode: number;
@@ -50,6 +67,7 @@ function notifySessionExpired(reason?: string): void {
 
 export interface RequestOptions extends RequestInit {
   json?: unknown;
+  silentAuth?: boolean;
 }
 
 /**
@@ -76,8 +94,8 @@ export async function apiFetch<T = unknown>(
 
   const response = await fetch(url, fetchOptions);
 
-  // Handle unauthenticated / session expired response
-  if (response.status === 401) {
+  // Handle unauthenticated / session expired response (suppressed when silentAuth is requested)
+  if (response.status === 401 && !options.silentAuth) {
     notifySessionExpired('Session expired or unauthorized. Please sign in again.');
   }
 
@@ -101,11 +119,16 @@ export async function apiFetch<T = unknown>(
   return data as T;
 }
 
+export interface DownloadOptions {
+  silentAuth?: boolean;
+}
+
 /**
  * Streaming download helper that preserves credentials and dispatches session expiry on 401.
  */
 export async function apiDownload(
-  endpoint: string
+  endpoint: string,
+  options: DownloadOptions = {}
 ): Promise<{ blob: Blob; filename?: string }> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
 
@@ -113,7 +136,7 @@ export async function apiDownload(
     credentials: 'include',
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 && !options.silentAuth) {
     notifySessionExpired('Session expired or unauthorized. Please sign in again.');
   }
 

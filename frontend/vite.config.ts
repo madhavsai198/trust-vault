@@ -4,4 +4,29 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/auth': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+      '/api': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+      '/documents': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+      '/audit-logs': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+    },
+  },
 })
+

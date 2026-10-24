@@ -5,8 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import type { UserProfile } from '../types/document';
-
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiFetch } from '../lib/api';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -59,18 +58,15 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, sessionNotic
     const payload = isRegister ? { name, email, password } : { email, password };
 
     try {
-      const res = await fetch(`${API_URL}${endpoint}`, {
+      const data = await apiFetch<{ user: UserProfile; message?: string }>(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload),
+        json: payload,
+        silentAuth: true,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Authentication failed. Please try again.');
       onAuthSuccess(data.user);
       onClose();
     } catch (err: unknown) {
-      setError((err as Error).message);
+      setError((err as Error).message || 'Authentication failed. Please try again.');
     } finally {
       setLoading(false);
     }
