@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     './index.html',
     './src/**/*.{ts,tsx}',
@@ -7,17 +8,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        // ── Backgrounds ─────────────────────────────────────────
+        // ── Adaptive Backgrounds ────────────────────────────────
         vault: {
-          950: '#0A0805',
-          900: '#0F0C08',
-          850: '#141008',
-          800: '#1A1610',
-          750: '#1E1A12',
-          700: '#211D14',
-          600: '#2A2518',
-          500: '#35301F',
-          400: '#4A4430',
+          950: 'rgb(var(--vault-950) / <alpha-value>)',
+          900: 'rgb(var(--vault-900) / <alpha-value>)',
+          850: 'rgb(var(--vault-850) / <alpha-value>)',
+          800: 'rgb(var(--vault-800) / <alpha-value>)',
+          750: 'rgb(var(--vault-750) / <alpha-value>)',
+          700: 'rgb(var(--vault-700) / <alpha-value>)',
+          600: 'rgb(var(--vault-600) / <alpha-value>)',
+          500: 'rgb(var(--vault-500) / <alpha-value>)',
+          400: 'rgb(var(--vault-400) / <alpha-value>)',
         },
         // ── Primary: Cobalt Blue ────────────────────────────────
         cobalt: {
@@ -27,8 +28,8 @@ export default {
           700: '#1B4FD8',
           600: '#2563EB',
           500: '#3B7CF8',
-          400: '#5B93FF',
-          300: '#93B8FF',
+          400: 'rgb(var(--cobalt-400) / <alpha-value>)',
+          300: 'rgb(var(--cobalt-300) / <alpha-value>)',
           200: '#C7DAFF',
           100: '#EBF1FF',
         },
@@ -40,22 +41,22 @@ export default {
           700: '#A06A00',
           600: '#C88800',
           500: '#EAB308',
-          400: '#F5C842',
-          300: '#FAD96A',
+          400: 'rgb(var(--sun-400) / <alpha-value>)',
+          300: 'rgb(var(--sun-300) / <alpha-value>)',
           200: '#FDE89A',
           100: '#FEF6D0',
         },
-        // ── Warm text tones ─────────────────────────────────────
+        // ── Adaptive Text Tones ─────────────────────────────────
         sand: {
-          100: '#F5EFE0',
-          200: '#E8DFC7',
-          300: '#D4C9A8',
-          400: '#C4B89A',
-          500: '#A89E82',
-          600: '#8A8066',
-          700: '#6E654E',
-          800: '#524C39',
-          900: '#3A3428',
+          100: 'rgb(var(--sand-100) / <alpha-value>)',
+          200: 'rgb(var(--sand-200) / <alpha-value>)',
+          300: 'rgb(var(--sand-300) / <alpha-value>)',
+          400: 'rgb(var(--sand-400) / <alpha-value>)',
+          500: 'rgb(var(--sand-500) / <alpha-value>)',
+          600: 'rgb(var(--sand-600) / <alpha-value>)',
+          700: 'rgb(var(--sand-700) / <alpha-value>)',
+          800: 'rgb(var(--sand-800) / <alpha-value>)',
+          900: 'rgb(var(--sand-900) / <alpha-value>)',
         },
       },
       fontFamily: {
@@ -64,9 +65,9 @@ export default {
         mono:  ['"JetBrains Mono"', 'Menlo', 'monospace'],
       },
       backgroundImage: {
-        'vault-radial': 'radial-gradient(ellipse 80% 60% at 50% -20%, rgba(27,79,216,0.15), transparent)',
-        'cobalt-glow':  'radial-gradient(ellipse 60% 40% at 50% 100%, rgba(27,79,216,0.10), transparent)',
-        'sun-glow':     'radial-gradient(ellipse 40% 30% at 80% 20%, rgba(245,200,66,0.08), transparent)',
+        'vault-radial': 'radial-gradient(ellipse 80% 60% at 50% -20%, var(--glow-cobalt), transparent)',
+        'cobalt-glow':  'radial-gradient(ellipse 60% 40% at 50% 100%, var(--glow-cobalt-subtle), transparent)',
+        'sun-glow':     'radial-gradient(ellipse 40% 30% at 80% 20%, var(--glow-sun), transparent)',
       },
       keyframes: {
         'fade-up': {
@@ -103,7 +104,7 @@ export default {
         'cobalt-lg': '0 8px 40px rgba(27,79,216,0.40)',
         'sun-sm':    '0 2px 8px rgba(245,200,66,0.20)',
         'sun-md':    '0 4px 20px rgba(245,200,66,0.30)',
-        'vault-card':'0 1px 0 rgba(245,239,224,0.06), inset 0 1px 0 rgba(245,239,224,0.04)',
+        'vault-card':'var(--shadow-vault-card)',
       },
     },
   },

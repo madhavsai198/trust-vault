@@ -5,54 +5,121 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
     <!-- Primary SEO Meta Tags -->
-    <title>TrustVault — Zero-Knowledge Secure Document Sharing & Storage</title>
-    <meta name="title" content="TrustVault — Zero-Knowledge Secure Document Sharing & Storage" />
-    <meta name="description" content="TrustVault provides zero-knowledge secure document storage and sharing with end-to-end encryption, role-based access control, and comprehensive audit trails." />
-    <meta name="keywords" content="secure document sharing, zero knowledge encryption, cloud vault, encrypted storage, access control, audit trail, TrustVault" />
-    <meta name="author" content="TrustVault Team" />
-    <meta name="robots" content="index, follow" />
+    <title>TrustVault — Zero-Knowledge Secure Document Storage & Sharing</title>
+    <meta name="title" content="TrustVault — Zero-Knowledge Secure Document Storage & Sharing" />
+    <meta name="description" content="TrustVault provides zero-knowledge secure document storage and sharing with end-to-end encryption, role-based access control, file signature inspection, and immutable audit logs." />
+    <meta name="keywords" content="secure document storage, zero-knowledge encryption, encrypted file sharing, RBAC, tamper-evident audit trail, magic-byte inspection, private cloud vault, TrustVault" />
+    <meta name="author" content="TrustVault Security Team" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href="https://trustvault.dev" />
+
+    <!-- Performance & Typography Preconnect -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://trustvault.dev/" />
-    <meta property="og:title" content="TrustVault — Zero-Knowledge Secure Document Sharing & Storage" />
+    <meta property="og:title" content="TrustVault — Zero-Knowledge Secure Document Storage & Sharing" />
     <meta property="og:description" content="Store and share sensitive documents with end-to-end encryption, granular role-based permissions, and immutable audit logs." />
     <meta property="og:site_name" content="TrustVault" />
+    <meta property="og:locale" content="en_US" />
 
-    <!-- Twitter -->
+    <!-- Twitter Card -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content="https://trustvault.dev/" />
-    <meta property="twitter:title" content="TrustVault — Zero-Knowledge Secure Document Sharing & Storage" />
+    <meta property="twitter:title" content="TrustVault — Zero-Knowledge Secure Document Storage & Sharing" />
     <meta property="twitter:description" content="Store and share sensitive documents with end-to-end encryption, granular role-based permissions, and immutable audit logs." />
 
     <!-- Mobile & PWA -->
-    <meta name="theme-color" content="#030712" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#F8FAFC" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/site.webmanifest" />
 
-    <!-- Structured Data (Schema.org JSON-LD) -->
+    <!-- Theme Bootstrapper (Zero-Flash Light/Dark Init) -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('trustvault-theme');
+          var theme = (saved === 'dark') ? 'dark' : 'light';
+          if (theme === 'dark') {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+          } else {
+            document.documentElement.classList.add('light');
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- Structured Data (Schema.org JSON-LD): WebApplication + FAQPage -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "TrustVault",
-        "url": "https://trustvault.dev",
-        "description": "Zero-knowledge secure document storage and sharing platform featuring end-to-end encryption, role-based access control, and complete audit logging.",
-        "applicationCategory": "SecurityApplication",
-        "operatingSystem": "Web",
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        },
-        "featureList": [
-          "End-to-End Encryption",
-          "Role-Based Access Control (Admin, Owner, Viewer)",
-          "HttpOnly Cookie Authentication",
-          "Immutable Audit Trail",
-          "Zero-Knowledge Architecture"
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "@id": "https://trustvault.dev/#webapp",
+            "name": "TrustVault",
+            "url": "https://trustvault.dev",
+            "description": "Zero-knowledge secure document storage and sharing platform featuring end-to-end encryption, role-based access control, file signature verification, and complete audit logging.",
+            "applicationCategory": "SecurityApplication",
+            "operatingSystem": "Web Browser",
+            "browserRequirements": "Requires JavaScript and HTML5 support",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": [
+              "End-to-End Encrypted Storage",
+              "Magic-Byte File Signature Verification",
+              "Role-Based Access Control (Admin, Owner, Viewer)",
+              "HttpOnly Strict Cookie Authentication",
+              "Immutable Security Audit Trail",
+              "Zero-Knowledge Storage Architecture"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://trustvault.dev/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How does TrustVault isolate my private files?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Files are stored in private isolated storage on the server with cryptographically generated UUIDv4 keys. Client filenames are never used directly on disk, eliminating path traversal risks and direct URL access."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does TrustVault prevent XSS token theft?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Authentication tokens are sealed in HttpOnly, SameSite=Strict cookies. JavaScript execution inside the browser cannot read or exfiltrate your session token, protecting against cross-site scripting."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What is file signature verification?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "TrustVault inspects the binary magic bytes of every uploaded file to verify its true MIME type before storage, preventing disguised executable files or polyglot payloads."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Who can access the security audit trail?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The audit trail is strictly restricted to authenticated users with the ADMIN role. Every document view, upload, download, permission delegation, and authentication event is logged with actor identification and request tracing."
+                }
+              }
+            ]
+          }
         ]
       }
     </script>

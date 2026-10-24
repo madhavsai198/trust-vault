@@ -5,7 +5,81 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Global resets ─────────────────────────────────────────── */
+/* ── Theme Definitions ────────────────────────────────────────── */
+:root {
+  /* ── LIGHT MODE (Default) ─────────────────────────────────── */
+  --vault-950: 241 245 249;  /* Slate 100 - footer / dark inset */
+  --vault-900: 248 250 252;  /* Slate 50  - main page canvas */
+  --vault-850: 255 255 255;  /* White     - clean inputs / surfaces */
+  --vault-800: 255 255 255;  /* White     - card / dialog surfaces */
+  --vault-750: 241 245 249;  /* Slate 100 - hover states */
+  --vault-700: 226 232 240;  /* Slate 200 - active tabs / subtle chip */
+  --vault-600: 203 213 225;  /* Slate 300 - scrollbar / borders */
+  --vault-500: 148 163 184;  /* Slate 400 - subtle borders */
+  --vault-400: 100 116 139;  /* Slate 500 - icon outlines */
+
+  /* Text: High contrast and readability in light mode */
+  --sand-100: 15 23 42;      /* Slate 900 - primary headings & titles */
+  --sand-200: 30 41 59;      /* Slate 800 - secondary headings */
+  --sand-300: 51 65 85;      /* Slate 700 - primary body text */
+  --sand-400: 71 85 105;     /* Slate 600 - secondary descriptions */
+  --sand-500: 100 116 139;   /* Slate 500 - captions / metadata */
+  --sand-600: 148 163 184;   /* Slate 400 - placeholders */
+  --sand-700: 203 213 225;   /* Slate 300 */
+  --sand-800: 226 232 240;   /* Slate 200 */
+  --sand-900: 241 245 249;   /* Slate 100 */
+
+  /* High-contrast accessible accents for light backgrounds */
+  --cobalt-400: 29 78 216;   /* Blue 700  - readable on light bg */
+  --cobalt-300: 29 78 216;   /* Blue 700  - readable badge text */
+  --sun-400: 180 83 9;       /* Amber 700 - readable on light bg */
+  --sun-300: 180 83 9;       /* Amber 700 - readable badge text */
+
+  /* Luminous light ambient gradients */
+  --glow-cobalt: rgba(27, 79, 216, 0.07);
+  --glow-cobalt-subtle: rgba(27, 79, 216, 0.04);
+  --glow-sun: rgba(234, 179, 8, 0.05);
+
+  --shadow-vault-card: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 8px 24px -4px rgba(15, 23, 42, 0.06);
+}
+
+html.dark {
+  /* ── DARK MODE ────────────────────────────────────────────── */
+  --vault-950: 10 8 5;       /* #0A0805 - obsidian deepest */
+  --vault-900: 15 12 8;      /* #0F0C08 - obsidian canvas */
+  --vault-850: 20 16 8;      /* #141008 - input background */
+  --vault-800: 26 22 16;     /* #1A1610 - card surface */
+  --vault-750: 30 26 18;     /* #1E1A12 - hover state */
+  --vault-700: 33 29 20;     /* #211D14 - active tab */
+  --vault-600: 42 37 24;     /* #2A2518 - scrollbar / border */
+  --vault-500: 53 48 31;     /* #35301F - subtle border */
+  --vault-400: 74 68 48;     /* #4A4430 - icon outlines */
+
+  /* Text: Warm sand tones */
+  --sand-100: 245 239 224;   /* #F5EFE0 - bright cream heading */
+  --sand-200: 232 223 199;   /* #E8DFC7 */
+  --sand-300: 212 201 168;   /* #D4C9A8 - body text */
+  --sand-400: 196 184 154;   /* #C4B89A - description */
+  --sand-500: 168 158 130;   /* #A89E82 - caption */
+  --sand-600: 138 128 102;   /* #8A8066 - placeholder */
+  --sand-700: 110 101 78;    /* #6E654E */
+  --sand-800: 82 76 57;      /* #524C39 */
+  --sand-900: 58 52 40;      /* #3A3428 */
+
+  /* Glowing accents for dark background */
+  --cobalt-400: 91 147 255;   /* #5B93FF */
+  --cobalt-300: 147 184 255;  /* #93B8FF */
+  --sun-400: 245 200 66;     /* #F5C842 */
+  --sun-300: 250 217 106;    /* #FAD96A */
+
+  --glow-cobalt: rgba(27, 79, 216, 0.15);
+  --glow-cobalt-subtle: rgba(27, 79, 216, 0.10);
+  --glow-sun: rgba(245, 200, 66, 0.08);
+
+  --shadow-vault-card: 0 1px 0 rgba(245, 239, 224, 0.06), inset 0 1px 0 rgba(245, 239, 224, 0.04);
+}
+
+/* ── Global resets & accessibility ─────────────────────────── */
 @layer base {
   *, *::before, *::after {
     box-sizing: border-box;
@@ -17,84 +91,124 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  /* Fixed navbar anchor offset */
+  section[id] {
+    scroll-margin-top: 5rem;
+  }
+
   body {
-    background-color: #0F0C08;
-    color: #F5EFE0;
+    background-color: rgb(var(--vault-900));
+    color: rgb(var(--sand-100));
     font-family: 'Inter', ui-sans-serif, system-ui;
     min-height: 100vh;
+    transition: background-color 200ms ease, color 200ms ease;
   }
 
   ::selection {
-    background-color: rgba(27, 79, 216, 0.35);
-    color: #F5EFE0;
+    background-color: rgba(27, 79, 216, 0.25);
+    color: inherit;
   }
 
-  /* Custom scrollbar */
+  /* Custom adaptive scrollbar */
   ::-webkit-scrollbar        { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track  { background: #0F0C08; }
-  ::-webkit-scrollbar-thumb  { background: #35301F; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #4A4430; }
+  ::-webkit-scrollbar-track  { background: rgb(var(--vault-900)); }
+  ::-webkit-scrollbar-thumb  { background: rgb(var(--vault-600)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--vault-500)); }
 }
 
 /* ── Component classes ─────────────────────────────────────── */
 @layer components {
 
-  /* Primary CTA button — cobalt blue */
+  /* Primary CTA button — Amber / Gold */
   .btn-primary {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
-    padding: 0.625rem 1.25rem;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.35rem;
     border-radius: 0.75rem;
-    background-color: #1B4FD8;
+    background-color: #D97706;
     color: #ffffff;
+    font-size: 0.875rem;
     font-weight: 600;
     transition: all 200ms;
-    box-shadow: 0 2px 8px rgba(27, 79, 216, 0.25);
+    box-shadow: 0 2px 10px rgba(217, 119, 6, 0.25);
   }
   .btn-primary:hover {
-    background-color: #2563EB;
-    box-shadow: 0 4px 20px rgba(27, 79, 216, 0.35);
+    background-color: #B45309;
+    box-shadow: 0 4px 20px rgba(217, 119, 6, 0.35);
   }
   .btn-primary:active {
     transform: scale(0.98);
   }
   .btn-primary:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #3B7CF8, 0 0 0 4px #0F0C08;
+    box-shadow: 0 0 0 2px #F59E0B, 0 0 0 4px rgb(var(--vault-900));
+  }
+  html.dark .btn-primary {
+    background-color: #EAB308;
+    color: #0F0C08;
+    box-shadow: 0 2px 10px rgba(234, 179, 8, 0.30);
+  }
+  html.dark .btn-primary:hover {
+    background-color: #F5C842;
+    box-shadow: 0 4px 20px rgba(234, 179, 8, 0.40);
   }
 
-  /* Secondary ghost button */
-  .btn-ghost {
+  /* Secondary CTA / ghost button — Bluish Cobalt */
+  .btn-ghost, .btn-secondary {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
-    padding: 0.625rem 1.25rem;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.35rem;
     border-radius: 0.75rem;
-    border: 1px solid rgba(245, 239, 224, 0.15);
-    color: #D4C9A8;
+    border: 1px solid rgba(27, 79, 216, 0.28);
+    color: #1B4FD8;
+    background-color: rgba(27, 79, 216, 0.05);
+    font-size: 0.875rem;
     font-weight: 600;
     transition: all 200ms;
+    box-shadow: 0 1px 3px rgba(27, 79, 216, 0.08);
   }
-  .btn-ghost:hover {
-    border-color: rgba(37, 99, 235, 0.5);
-    color: #F5EFE0;
-    background-color: rgba(17, 34, 96, 0.3);
+  .btn-ghost:hover, .btn-secondary:hover {
+    border-color: rgba(27, 79, 216, 0.55);
+    color: #1D4ED8;
+    background-color: rgba(27, 79, 216, 0.12);
+    box-shadow: 0 3px 12px rgba(27, 79, 216, 0.18);
   }
-  .btn-ghost:focus-visible {
+  .btn-ghost:active, .btn-secondary:active {
+    transform: scale(0.98);
+  }
+  .btn-ghost:focus-visible, .btn-secondary:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #3B7CF8, 0 0 0 4px #0F0C08;
+    box-shadow: 0 0 0 2px #3B7CF8, 0 0 0 4px rgb(var(--vault-900));
+  }
+  html.dark .btn-ghost, html.dark .btn-secondary {
+    border-color: rgba(91, 147, 255, 0.35);
+    color: #93B8FF;
+    background-color: rgba(27, 79, 216, 0.15);
+  }
+  html.dark .btn-ghost:hover, html.dark .btn-secondary:hover {
+    border-color: rgba(91, 147, 255, 0.65);
+    color: #C7DAFF;
+    background-color: rgba(27, 79, 216, 0.25);
   }
 
   /* Sun yellow accent button */
   .btn-sun {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
-    padding: 0.625rem 1.25rem;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.35rem;
     border-radius: 0.75rem;
     background-color: #EAB308;
-    color: #0F0C08;
+    color: #0F172A;
+    font-size: 0.875rem;
     font-weight: 700;
     transition: all 200ms;
     box-shadow: 0 2px 8px rgba(245, 200, 66, 0.2);
@@ -108,49 +222,58 @@
   }
   .btn-sun:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px #F5C842, 0 0 0 4px #0F0C08;
+    box-shadow: 0 0 0 2px #F5C842, 0 0 0 4px rgb(var(--vault-900));
   }
 
   /* Card surface */
   .card {
     border-radius: 1rem;
-    border: 1px solid rgba(245, 239, 224, 0.08);
-    background-color: rgba(33, 29, 20, 0.7);
+    border: 1px solid rgb(var(--sand-100) / 0.08);
+    background-color: rgb(var(--vault-800) / 0.95);
     backdrop-filter: blur(8px);
-    box-shadow: 0 1px 0 rgba(245, 239, 224, 0.06), inset 0 1px 0 rgba(245, 239, 224, 0.04);
+    box-shadow: var(--shadow-vault-card);
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  }
+  html.dark .card {
+    background-color: rgba(33, 29, 20, 0.7);
   }
 
   /* Glass card */
   .card-glass {
     border-radius: 1rem;
-    border: 1px solid rgba(245, 239, 224, 0.1);
-    background-color: rgba(26, 22, 16, 0.8);
+    border: 1px solid rgb(var(--sand-100) / 0.1);
+    background-color: rgb(var(--vault-800) / 0.85);
     backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-vault-card);
+  }
+  html.dark .card-glass {
+    background-color: rgba(26, 22, 16, 0.8);
   }
 
   /* Input field */
   .input-vault {
     width: 100%;
+    min-height: 2.75rem;
     padding: 0.625rem 1rem;
-    background-color: #141008;
-    border: 1px solid rgba(245, 239, 224, 0.1);
+    background-color: rgb(var(--vault-850));
+    border: 1px solid rgb(var(--sand-100) / 0.14);
     border-radius: 0.75rem;
     font-size: 0.875rem;
-    color: #F5EFE0;
+    color: rgb(var(--sand-100));
     transition: all 150ms;
   }
   .input-vault::placeholder {
-    color: #8A8066;
+    color: rgb(var(--sand-500));
   }
   .input-vault:focus {
     outline: none;
     border-color: #2563EB;
-    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.5);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
   }
 
   /* Section separator */
   .divider {
-    border-top: 1px solid rgba(245, 239, 224, 0.08);
+    border-top: 1px solid rgb(var(--sand-100) / 0.08);
   }
 
   /* Cobalt badge */
@@ -163,9 +286,9 @@
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.05em;
-    background-color: rgba(27, 79, 216, 0.2);
-    border: 1px solid rgba(37, 99, 235, 0.3);
-    color: #93B8FF;
+    background-color: rgba(27, 79, 216, 0.10);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+    color: rgb(var(--cobalt-400));
   }
 
   /* Sun badge */
@@ -178,8 +301,8 @@
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.05em;
-    background-color: rgba(234, 179, 8, 0.15);
-    border: 1px solid rgba(234, 179, 8, 0.3);
-    color: #F5C842;
+    background-color: rgba(234, 179, 8, 0.12);
+    border: 1px solid rgba(234, 179, 8, 0.28);
+    color: rgb(var(--sun-400));
   }
 }

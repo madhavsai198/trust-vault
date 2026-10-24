@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import type { UserProfile } from '../types/document';
+import ThemeToggle from './ThemeToggle';
 
 interface AppNavbarProps {
   currentUser: UserProfile;
@@ -62,13 +63,13 @@ export default function AppNavbar({
             className="flex items-center gap-2.5 group focus:outline-none focus:ring-2 focus:ring-cobalt-500 rounded-lg p-1"
             title="TrustVault Home"
           >
-            <div className="w-8 h-8 rounded-lg bg-cobalt-700 flex items-center justify-center
-                            font-black text-white text-xs shadow-cobalt-sm
-                            group-hover:bg-cobalt-600 transition-colors">
+            <div className="w-8 h-8 rounded-lg bg-amber-600 dark:bg-sun-500 flex items-center justify-center
+                            font-black text-white text-xs shadow-sm
+                            group-hover:bg-amber-500 transition-colors">
               TV
             </div>
             <span className="font-bold text-lg text-sand-100 hidden sm:block">
-              Trust<span className="text-cobalt-400">Vault</span>
+              Trust<span className="text-amber-600 dark:text-sun-400">Vault</span>
             </span>
           </button>
 
@@ -107,8 +108,10 @@ export default function AppNavbar({
           </nav>
         </div>
 
-        {/* Right: User + Actions */}
+        {/* Right: User + Theme + Actions */}
         <div className="hidden md:flex items-center gap-3">
+          <ThemeToggle />
+
           {/* User chip */}
           <div className="flex items-center gap-2.5 bg-vault-700/60 border border-sand-100/8 px-3 py-1.5 rounded-xl text-sm">
             <div className="w-6 h-6 rounded-full bg-cobalt-700/60 border border-cobalt-600/40
@@ -215,6 +218,12 @@ export default function AppNavbar({
               </svg>
               Home
             </button>
+          </div>
+
+          {/* Theme mode toggle */}
+          <div className="pt-2 border-t border-sand-100/8 flex items-center justify-between">
+            <span className="text-xs text-sand-400 font-medium">Appearance</span>
+            <ThemeToggle showLabel />
           </div>
 
           {/* Sign out */}
